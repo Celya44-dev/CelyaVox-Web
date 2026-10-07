@@ -604,6 +604,10 @@
                 <i class="fa fa-inbox bottom-nav__icon" aria-hidden="true"></i>
                 <span id="label-visual_voicemail" class="bottom-nav__label"></span>
             </button>
+            <button class="bottom-nav__item" id="nav-transcription" type="button" aria-label="" style="display:none;">
+                <i class="fa fa-file-text bottom-nav__icon" aria-hidden="true"></i>
+                <span id="label-transcription" class="bottom-nav__label"></span>
+            </button>
             <button class="bottom-nav__item" id="nav-agent" type="button" aria-label="" style="display:none;">
                 <i class="fa fa-headphones bottom-nav__icon" aria-hidden="true"></i>
                 <span id="label-agent" class="bottom-nav__label"></span>
@@ -672,6 +676,8 @@
     var rightPanelPushWidth = null;
     var dashboardRefreshTimer = null;
     var dashboardAutoOpened = false;
+    var hasTranscriptionV = false;
+    var hasTranscriptionM = false;
         function toArrayFromResponse(data){
             // Déjà un tableau
             if(Array.isArray(data)) return data;
@@ -980,7 +986,7 @@
                 '<th>' + (lang && lang['date'] ? lang['date'] : 'Date') + '</th>'+
                 '<th>' + (lang && lang['caller'] ? lang['caller'] : 'Caller') + '</th>'+
                 '<th>' + (lang && lang['duration'] ? lang['duration'] : 'Duration') + '</th>'+
-                '<th>' + (lang && lang['playback'] ? lang['playback'] : 'Playback') + '</th>'+
+                '<th>' + (lang && lang['recording'] ? lang['recording'] : 'Recording') + ' & ' + (lang && lang['transcription'] ? lang['transcription'] : 'Transcription') + '</th>'+
                 '</tr></thead><tbody>';
             for(var i=0;i<items.length;i++){
                 var it = items[i] || {};
@@ -992,6 +998,8 @@
                 var dossier = pick(it, ['folder','dossier']);
                 var fichier = pick(it, ['file','fichier']);
                 var msgId   = pick(it, ['message_id','id','uid','key']);
+                var transcription = pick(it, ['transcription','Transcription']) || '';
+                
                 // Mettre en gras les éléments dont le dossier est INBOX (casse ignorée)
                 var isInbox = false;
                 try{ isInbox = String(dossier || '').toUpperCase() === 'INBOX'; }catch(e){ isInbox = false; }
@@ -1006,52 +1014,61 @@
                         u.searchParams.set('fichier', String(fichier));
                         if(apiKey) u.searchParams.set('api_key', apiKey);
                         try{ var pfx = localStorage.getItem('prefixe') || ''; if(pfx) u.searchParams.set('prefixe', pfx); }catch(e){}
+                        u.searchParams.set('transcription', '1');
                         audioUrl = u.toString();
                     }catch(e){ /* ignore */ }
                 }
                 if(!audioUrl && audio){ audioUrl = audio; }
                 var numberBtn = '<button type="button" class="voicemail-call sp-link" data-number="'+ escHtml(fromVal) +'">'+ escHtml(fromVal) +'</button>';
-                // Gestion des cas: 1) endpoint direct binaire, 2) endpoint JSON { minetype, audio(base64) }, 3) données déjà incluses (it.minetype + it.audio)
+                
+                // Générer l'ID unique pour ce message
+                var vmMsgId = 'vm-msg-' + (msgId || i) + '-' + Math.random().toString(36).substr(2, 9);
+                
+                // Extraire les deux premières lignes de la transcription
+                function getFirstTwoLines(text){
+                    if(!text || typeof text !== 'string') return '';
+                    var lines = text.split('\n').slice(0, 2).join('\n').trim();
+                    return lines.length > 80 ? lines.substring(0, 77) + '...' : lines;
+                }
+                
+                var transcriptionPreview = getFirstTwoLines(transcription);
+                
+                // Construire le contenu de la ligne action
                 var action = '';
                 var mimeInline = pick(it, ['minetype','mime','mimetype']);
                 var b64Inline  = (it && it.audio) ? String(it.audio) : '';
-                if(b64Inline && (mimeInline || '')){
-                    // Encodage direct en Data URL si c'est réellement du base64 plausible
-                    var isBase64 = /^[A-Za-z0-9+/=\r\n]+$/.test(b64Inline.replace(/\s+/g,''));
-                    if(isBase64){
-                        var dataUrl = 'data:' + escHtml(mimeInline || 'audio/wav') + ';base64,' + b64Inline.replace(/\s+/g,'');
-                        action = '<audio controls preload="metadata" style="width:220px; max-width:100%;" src="'+ dataUrl +'"></audio>';
-                    }
+                
+                // Icône play uniquement
+                var playIcon = '<button type="button" class="vm-play-recording" data-msg-id="'+ escHtml(vmMsgId) +'" data-real-msg-id="'+ escHtml(String(msgId || '')) +'" data-audio-base="'+ escHtml(ctx.audioBase || '') +'" data-dossier="'+ escHtml(String(dossier || '')) +'" data-fichier="'+ escHtml(String(fichier || '')) +'" data-api-ext="'+ escHtml(apiExt || '') +'" data-api-key="'+ escHtml(apiKey || '') +'" style="padding:6px; border-radius:6px; background:#f0f0f0; border:1px solid #ddd; cursor:pointer; flex-shrink:0;" title="' + (lang && lang['play'] ? lang['play'] : 'Play') + '">'
+                    + '<i class="fa fa-play" style="color:#d32f2f;"></i>'
+                    + '</button>';
+                
+                // Bouton supprimer
+                var delBase = ctx.deleteBase || '';
+                var delBtn = '';
+                if(msgId && delBase){
+                    delBtn = '<button type="button" class="vm-delete sp-button-danger" data-id="'+ escHtml(msgId) +'" data-endpoint="'+ escHtml(delBase) +'" data-ext="'+ escHtml(apiExt || '') +'" data-key="'+ escHtml(apiKey || '') +'"'
+                        + ' style="padding:6px; border-radius:6px; flex-shrink:0; margin-left:auto;" title="' + (lang && lang['delete'] ? lang['delete'] : 'Delete') + '" aria-label="' + (lang && lang['delete'] ? lang['delete'] : 'Delete') + ' ce message">'
+                        + '<i class="fa fa-trash"></i>'
+                        + '</button>';
                 }
-                if(!action){
-                    if(audioUrl){
-                        // On diffère le chargement: on affiche un bouton explicite qui fera le fetch puis activera le player
-            var btn = '<button type="button" class="vm-load sp-button-surface" data-endpoint="'+ escHtml(audioUrl) +'" style="padding:6px 10px; border-radius:6px;">'
-                + '<i class="fa fa-download"></i> Lire'
-                + '</button>';
-               var delBase = ctx.deleteBase || '';
-                        var delBtn = '';
-                        if(msgId && delBase){
-                            delBtn = '<button type="button" class="vm-delete sp-button-danger" data-id="'+ escHtml(msgId) +'" data-endpoint="'+ escHtml(delBase) +'" data-ext="'+ escHtml(apiExt || '') +'" data-key="'+ escHtml(apiKey || '') +'"'
-                                + ' title="' + (lang && lang['delete'] ? lang['delete'] : 'Delete') + '" aria-label="' + (lang && lang['delete'] ? lang['delete'] : 'Delete') + ' ce message">'
-                                + '<i class="fa fa-trash"></i>'
-                                + '</button>';
-                        }
-         action = '<div class="vm-audio" style="display:flex; align-items:center; gap:8px; flex-wrap:nowrap; width:100%;"'
-                   + (msgId ? ' data-msg-id="'+ escHtml(msgId) +'"' : '')
-                   + (moveBase ? ' data-move="'+ escHtml(moveBase) +'"' : '')
-                   + (apiExt ? ' data-ext="'+ escHtml(apiExt) +'"' : '')
-                   + (apiKey ? ' data-key="'+ escHtml(apiKey) +'"' : '')
-                   + (dossier ? ' data-folder="'+ escHtml(dossier) +'"' : '')
-                   + '>'
-                               +   btn
-                   +   '<audio controls preload="none" style="flex:1 1 auto; width:auto; min-width:240px; max-width:100%;" aria-label="Message vocal"></audio>'
-                               +   (delBtn ? delBtn : '')
-                               + '</div>';
-                    } else {
-                        action = '<span class="sp-muted">(pas d\'audio)</span>';
-                    }
+                
+                var transcriptionContent = '';
+                if(transcriptionPreview){
+                    transcriptionContent = '<div class="vm-transcription-preview" data-msg-id="'+ escHtml(vmMsgId) +'" data-full-transcription="'+ escHtml(String(transcription)) +'" style="padding:8px; background:#f9f9f9; border-radius:4px; cursor:pointer; white-space:pre-wrap; word-break:break-word; font-size:12px; color:#555; max-height:60px; overflow:hidden; border:1px solid #e0e0e0; flex:1;"'
+                        + ' title="' + (lang && lang['click_to_expand'] ? lang['click_to_expand'] : 'Click to expand') + '">'
+                        + escHtml(transcriptionPreview)
+                        + '</div>';
+                } else {
+                    transcriptionContent = '<span class="sp-muted" style="font-size:12px;">' + (lang && lang['no_transcription'] ? lang['no_transcription'] : 'No transcription') + '</span>';
                 }
+                
+                action = '<div class="vm-message-content" style="display:flex; align-items:center; gap:8px; width:100%;">'
+                    +   playIcon
+                    +   transcriptionContent
+                    +   (delBtn ? delBtn : '')
+                    + '</div>';
+                
                 var rowClass = isInbox ? ' class="sp-table-row--bold"' : '';
                 html += '<tr'+ rowClass +'>'+
                     '<td>'+ tryDate(dateVal) +'</td>'+
@@ -1065,12 +1082,188 @@
         }
 
         function bindVoicemailClicks(){
-            if(!contentEl) return;
-            var buttons = contentEl.querySelectorAll('.voicemail-call');
+            if(!rightContentEl) return;
+            var buttons = rightContentEl.querySelectorAll('.voicemail-call');
             buttons.forEach(function(btn){
                 btn.addEventListener('click', function(){
                     var num = btn.getAttribute('data-number') || '';
                     if(num){ try{ if(window.DialByLine){ window.DialByLine('audio', null, num); } } catch(e){} }
+                });
+            });
+            
+            // Gestion des clics sur les icônes d'enregistrement
+            var recordingBtns = rightContentEl.querySelectorAll('.vm-play-recording');
+            recordingBtns.forEach(function(btn){
+                btn.addEventListener('click', function(){
+                    var msgId = btn.getAttribute('data-real-msg-id');  // utiliser le vrai message_id
+                    var audioBase = btn.getAttribute('data-audio-base');
+                    var dossier = btn.getAttribute('data-dossier');
+                    var fichier = btn.getAttribute('data-fichier');
+                    var apiExt = btn.getAttribute('data-api-ext');
+                    var apiKey = btn.getAttribute('data-api-key');
+                    if(!audioBase || !dossier || !fichier) return;
+                    
+                    // Appeler l'API pour récupérer le fichier audio
+                    var u = new URL(audioBase, window.location.origin);
+                    if(apiExt) u.searchParams.set('extension', apiExt);
+                    u.searchParams.set('dossier', dossier);
+                    u.searchParams.set('fichier', fichier);
+                    if(apiKey) u.searchParams.set('api_key', apiKey);
+                    try{ var pfx = localStorage.getItem('prefixe') || ''; if(pfx) u.searchParams.set('prefixe', pfx); }catch(e){}
+                    u.searchParams.set('transcription', '1');
+                    
+                    // Créer et afficher un modal avec lecteur audio
+                    var modal = document.createElement('div');
+                    modal.id = 'vm-audio-modal-' + msgId;
+                    modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:10000;';
+                    
+                    var content = document.createElement('div');
+                    content.style.cssText = 'background:white; padding:20px; border-radius:8px; max-width:600px; width:90%; box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+                    
+                    var closeBtn = document.createElement('button');
+                    closeBtn.type = 'button';
+                    closeBtn.innerHTML = '<i class="fa fa-times"></i>';
+                    closeBtn.style.cssText = 'position:absolute; top:10px; right:10px; background:none; border:none; font-size:20px; cursor:pointer; color:#999;';
+                    closeBtn.addEventListener('click', function(){ modal.remove(); });
+                    content.appendChild(closeBtn);
+                    
+                    var loadingMsg = document.createElement('p');
+                    loadingMsg.textContent = lang && lang['loading'] ? lang['loading'] : 'Loading...';
+                    loadingMsg.style.cssText = 'margin:10px 0; color:#666;';
+                    content.appendChild(loadingMsg);
+                    
+                    modal.appendChild(content);
+                    document.body.appendChild(modal);
+                    
+                    // Charger le fichier audio depuis l'API
+                    fetch(u.toString(), { method: 'GET' })
+                        .then(function(res){
+                            if(!res.ok) throw new Error('HTTP ' + res.status);
+                            var ct = (res.headers && res.headers.get('content-type')) || '';
+                            if(ct.indexOf('application/json') !== -1){ 
+                                return res.json().then(function(js){ return { kind:'json', data: js }; }); 
+                            }
+                            // Sinon, obtenir le blob et essayer de le parser comme JSON
+                            return res.blob().then(function(bl){
+                                return bl.text().then(function(txt){
+                                    try{
+                                        var js = JSON.parse(txt);
+                                        return { kind:'json', data: js };
+                                    } catch(e){
+                                        return { kind:'blob', data: bl };
+                                    }
+                                });
+                            });
+                        })
+                        .then(function(pkt){
+                            if(!pkt) throw new Error('Réponse vide');
+                            var audioUrl = '';
+                            if(pkt.kind === 'blob'){
+                                audioUrl = URL.createObjectURL(pkt.data);
+                            } else {
+                                // Réponse JSON avec base64
+                                var js = pkt.data;
+                                // L'API retourne souvent { status, message, data: "{...}" } où data est une chaîne
+                                if(js && typeof js === 'object' && js.data && typeof js.data === 'string'){
+                                    try{ js = JSON.parse(js.data); }catch(e){ js = {}; }
+                                }
+                                // Sinon si la réponse elle-même est une chaîne, la parser
+                                else if(typeof js === 'string'){
+                                    try{ js = JSON.parse(js); }catch(e){ js = {}; }
+                                }
+                                var mime = (js && (js.minetype || js.mimetype)) || 'audio/wav';
+                                var b64 = (js && js.audio) || '';
+                                if(!b64) throw new Error('Aucune donnée audio base64');
+                                var binaryStr = atob(b64);
+                                var bytes = new Uint8Array(binaryStr.length);
+                                for(var i = 0; i < binaryStr.length; i++){
+                                    bytes[i] = binaryStr.charCodeAt(i);
+                                }
+                                var blob = new Blob([bytes], { type: mime });
+                                audioUrl = URL.createObjectURL(blob);
+                            }
+                            
+                            // Remplacer le message de chargement par le lecteur audio
+                            content.removeChild(loadingMsg);
+                            
+                            var audioEl = document.createElement('audio');
+                            audioEl.controls = true;
+                            audioEl.preload = 'auto';
+                            audioEl.src = audioUrl;
+                            audioEl.style.cssText = 'width:100%; margin:10px 0;';
+                            content.appendChild(audioEl);
+                            
+                            // Appeler move_message quand l'audio se termine
+                            audioEl.addEventListener('ended', function(){
+                                try{
+                                    var domain = getCfg(["SipDomain","SipDomaine"]);
+                                    domain = normalizeApiDomain(domain);
+                                    var moveBase = normalizeApiUrl(localStorage.getItem('VoicemailMoveUrl')) || (domain + '/celyavox-api/voicemail/move_message');
+                                    var u = new URL(moveBase, window.location.origin);
+                                    u.searchParams.set('message_id', msgId);
+                                    if(apiExt) u.searchParams.set('extension', apiExt);
+                                    if(apiKey) u.searchParams.set('api_key', apiKey);
+                                    try{ var pfx = localStorage.getItem('prefixe') || ''; if(pfx) u.searchParams.set('prefixe', pfx); }catch(e){}
+                                    fetch(u.toString(), { method: 'GET' })
+                                        .then(function(res){ /* on ignore le corps */ })
+                                        .catch(function(err){ console.warn('move_message échoué', err); });
+                                }catch(e){ console.warn('Erreur move_message:', e); }
+                            });
+                            
+                            try{ audioEl.play(); }catch(e){}
+                        })
+                        .catch(function(err){
+                            // Afficher le message d'erreur
+                            console.error('Erreur chargement audio:', err);
+                            loadingMsg.textContent = (lang && lang['error_loading'] ? lang['error_loading'] : 'Error loading audio') + ': ' + err.message;
+                            loadingMsg.style.color = '#d32f2f';
+                        });
+                    
+                    modal.addEventListener('click', function(e){
+                        if(e.target === modal) modal.remove();
+                    });
+                });
+            });
+            
+            // Gestion des clics sur les prévisualisations de transcription
+            var transcriptionPreviews = rightContentEl.querySelectorAll('.vm-transcription-preview');
+            transcriptionPreviews.forEach(function(el){
+                el.addEventListener('click', function(){
+                    var msgId = el.getAttribute('data-msg-id');
+                    var fullText = el.getAttribute('data-full-transcription') || '';
+                    if(!msgId || !fullText) return;
+                    
+                    // Créer et afficher un modal avec le texte complet
+                    var modal = document.createElement('div');
+                    modal.id = 'vm-transcription-modal-' + msgId;
+                    modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:10000;';
+                    
+                    var content = document.createElement('div');
+                    content.style.cssText = 'background:white; padding:20px; border-radius:8px; max-width:800px; width:90%; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+                    
+                    var closeBtn = document.createElement('button');
+                    closeBtn.type = 'button';
+                    closeBtn.innerHTML = '<i class="fa fa-times"></i>';
+                    closeBtn.style.cssText = 'position:absolute; top:10px; right:10px; background:none; border:none; font-size:20px; cursor:pointer; color:#999;';
+                    closeBtn.addEventListener('click', function(){ modal.remove(); });
+                    content.appendChild(closeBtn);
+                    
+                    var title = document.createElement('h3');
+                    title.textContent = lang && lang['transcription'] ? lang['transcription'] : 'Transcription';
+                    title.style.cssText = 'margin:0 0 15px 0; color:#333;';
+                    content.appendChild(title);
+                    
+                    var textBox = document.createElement('div');
+                    textBox.style.cssText = 'flex:1; overflow:auto; padding:15px; background:#f9f9f9; border-radius:4px; border:1px solid #e0e0e0; white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.6; color:#555;';
+                    textBox.textContent = fullText;
+                    content.appendChild(textBox);
+                    
+                    modal.appendChild(content);
+                    document.body.appendChild(modal);
+                    
+                    modal.addEventListener('click', function(e){
+                        if(e.target === modal) modal.remove();
+                    });
                 });
             });
         }
@@ -1088,7 +1281,7 @@
 
             var voicemailTitle = lang && lang['visual_voicemail'] ? lang['visual_voicemail'] : 'Visual Voicemail';
             var loadingMsg = lang && lang['loading'] ? lang['loading'] : 'Loading…';
-            openPanel(voicemailTitle, '<div style="padding:12px;">' + loadingMsg + '</div>', 'voicemail');
+            openRightPanel(voicemailTitle, '<div style="padding:12px;">' + loadingMsg + '</div>', 'voicemail');
 
             domain = normalizeApiDomain(domain);
 
@@ -1101,6 +1294,7 @@
                 if(apiExt) u.searchParams.set('extension', apiExt);
                 if(apiKey) u.searchParams.set('api_key', apiKey);
                 try{ var pfx = localStorage.getItem('prefixe') || ''; if(pfx) u.searchParams.set('prefixe', pfx); }catch(e){}
+                u.searchParams.set('transcription', '1');
 
                 fetch(u.toString(), { method: 'GET' })
                     .then(function(res){
@@ -1157,20 +1351,186 @@
                         }
 
                         // Affichage direct de la liste, sans entête d'analyse
-                        contentEl.innerHTML = renderVoicemail(list, { audioBase: audioBase, apiExt: apiExt, apiKey: apiKey, deleteBase: deleteBase, moveBase: moveBase });
-                        sizePanelToContent();
+                        rightContentEl.innerHTML = renderVoicemail(list, { audioBase: audioBase, apiExt: apiExt, apiKey: apiKey, deleteBase: deleteBase, moveBase: moveBase });
+                        sizeRightPanelToContent();
                         bindVoicemailClicks();
                         bindVoicemailDeleteClicks();
                         // Préparer les lecteurs audio pour charger JSON base64 ou binaire à la demande
                         try{ setupVoicemailPlayers(); }catch(e){}
                     })
                     .catch(function(err){
-                        contentEl.innerHTML = '<div class="sp-error" style="padding:12px;">' + (lang && lang['error_loading_voicemail'] ? lang['error_loading_voicemail'] : 'Cannot load voicemail') + ' ('+ escHtml(err.message) +').</div>';
+                        rightContentEl.innerHTML = '<div class="sp-error" style="padding:12px;">' + (lang && lang['error_loading_voicemail'] ? lang['error_loading_voicemail'] : 'Cannot load voicemail') + ' ('+ escHtml(err.message) +').</div>';
                     });
             }catch(e){
-                contentEl.innerHTML = '<div class="sp-error" style="padding:12px;">URL invalide: '+ escHtml(e && e.message ? e.message : String(e)) +'</div>';
+                rightContentEl.innerHTML = '<div class="sp-error" style="padding:12px;">URL invalide: '+ escHtml(e && e.message ? e.message : String(e)) +'</div>';
             }
         }
+
+        function renderTranscription(items, ctx){
+            if(!Array.isArray(items)){
+                try{ return '<pre style="white-space:pre-wrap; word-break:break-word; padding:12px;">'+ escHtml(JSON.stringify(items, null, 2)) +'</pre>'; }
+                catch(e){ return '<div style="padding:12px;">'+ escHtml(String(items)) +'</div>'; }
+            }
+            if(items.length === 0){
+                var noTranscriptionMsg = lang && lang['no_transcription'] ? lang['no_transcription'] : 'No transcription.';
+                return '<div style="padding:12px;">' + noTranscriptionMsg + '</div>';
+            }
+            ctx = ctx || {};
+            var html = ''+
+                '<table class="sp-table">'+
+                '<thead><tr>'+
+                '<th>' + (lang && lang['date'] ? lang['date'] : 'Date') + '</th>'+
+                '<th>' + (lang && lang['caller'] ? lang['caller'] : 'Caller') + '</th>'+
+                '<th>' + (lang && lang['duration'] ? lang['duration'] : 'Duration') + '</th>'+
+                '<th>' + (lang && lang['transcription'] ? lang['transcription'] : 'Transcription') + '</th>'+
+                '<th style="text-align:center; width:50px;">' + (lang && lang['actions'] ? lang['actions'] : 'Actions') + '</th>'+
+                '</tr></thead><tbody>';
+            for(var i=0;i<items.length;i++){
+                var it = items[i] || {};
+                var dateVal = pick(it, ['time','date','Date','created','calldate']);
+                var fromVal = pick(it, ['callerid','cid','cid_num','from','src','caller']);
+                var durVal  = pick(it, ['call_duration','duration','length','len','sec','billsec']);
+                var typeVal = pick(it, ['type','Type']);
+                var resultVal = pick(it, ['result','Result']);
+                var codeDemande = pick(it, ['code_demande','id','message_id','uid']) || '';
+                var filename = pick(it, ['filename','file','audio_file']) || '';
+                
+                // Extraire les deux premières lignes de la transcription
+                function getFirstTwoLines(text){
+                    if(!text || typeof text !== 'string') return '';
+                    var lines = text.split('\n').slice(0, 2).join('\n').trim();
+                    return lines.length > 100 ? lines.substring(0, 97) + '...' : lines;
+                }
+                
+                // Afficher la transcription ou un message "pas encore disponible"
+                var transcriptionText = '';
+                var transcriptionId = 'transcription-' + Math.random().toString(36).substr(2, 9);
+                if(resultVal && String(resultVal).trim() !== ''){
+                    var preview = getFirstTwoLines(String(resultVal));
+                    var playBtn = filename ? '<button type="button" class="transcription-play" data-filename="'+ escHtml(String(filename)) +'" data-ext="'+ escHtml(ctx.apiExt || '') +'" data-key="'+ escHtml(ctx.apiKey || '') +'" style="padding:6px 10px; border:none; background:#f0f0f0; border-radius:4px; margin-right:8px; cursor:pointer; flex-shrink:0;" title="Écouter l\'audio"><i class="fa fa-play" style="color:#d32f2f;"></i></button>' : '';
+                    transcriptionText = '<div style="display:flex; align-items:center; gap:8px;">'
+                        + playBtn
+                        + '<div class="transcription-preview" data-transcription-id="'+ escHtml(transcriptionId) +'" data-full-text="'+ escHtml(String(resultVal)) +'" style="padding:8px; background:rgba(0,0,0,0.03); border-radius:4px; font-size:12px; cursor:pointer; word-break:break-word; white-space:pre-wrap; max-height:60px; overflow:hidden; flex:1;" title="Cliquez pour voir la transcription complète">'+ escHtml(preview) +'</div>'
+                        + '</div>';
+                } else {
+                    transcriptionText = '<span class="sp-muted" style="font-size:12px;">' + (lang && lang['not_available'] ? lang['not_available'] : 'Not available yet') + '</span>';
+                }
+                
+                // Bouton de suppression
+                var deleteBtn = '';
+                if(codeDemande){
+                    deleteBtn = '<button type="button" class="transcription-delete sp-button-danger" data-code-demande="'+ escHtml(String(codeDemande)) +'" data-ext="'+ escHtml(ctx.apiExt || '') +'" data-key="'+ escHtml(ctx.apiKey || '') +'" title="' + (lang && lang['delete'] ? lang['delete'] : 'Delete') + '" style="padding:6px 10px; border-radius:4px; font-size:14px;"><i class="fa fa-trash"></i></button>';
+                }
+                
+                var rowClass = '';
+                html += '<tr'+ rowClass +'>'+
+                    '<td style="text-align:center;">'+ tryDate(dateVal) +'</td>'+
+                    '<td style="text-align:center;">'+ escHtml(fromVal || '-') +'</td>'+
+                    '<td style="text-align:center;">'+ fmtDuration(durVal) +'</td>'+
+                    '<td style="text-align:center;">'+ transcriptionText +'</td>'+
+                    '<td style="text-align:center;">'+ deleteBtn +'</td>'+
+                '</tr>';
+            }
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function loadTranscription(){
+            var domain = getCfg(["SipDomain","SipDomaine"]);
+            var ext    = getCfg(["SipUsername","SipUserID","profileUserID"]) || '';
+            var apiExt = ext;
+            try{
+                var s = String(ext || '');
+                if(/^99\d{3}$/.test(s)) apiExt = s.substring(2);
+            }catch(e){}
+            var apiKey = getCfg(["api_key","ApiKey","API_KEY"]) || '';
+
+            var transcriptionTitle = lang && lang['transcription'] ? lang['transcription'] : 'Transcription';
+            var loadingMsg = lang && lang['loading'] ? lang['loading'] : 'Loading…';
+            openRightPanel(transcriptionTitle, '<div style="padding:12px;">' + loadingMsg + '</div>', 'transcription');
+
+            domain = normalizeApiDomain(domain);
+
+            var base = normalizeApiUrl(localStorage.getItem('TranscriptionUrl')) || (domain + '/celyavox-api/transcription/transcription');
+            try{
+                var u = new URL(base, window.location.origin);
+                if(apiExt) u.searchParams.set('extension', apiExt);
+                u.searchParams.set('type', 'monitor');
+                if(apiKey) u.searchParams.set('api_key', apiKey);
+                try{ var pfx = localStorage.getItem('prefixe') || ''; if(pfx) u.searchParams.set('prefixe', pfx); }catch(e){}
+                u.searchParams.set('transcription', '1');
+
+                fetch(u.toString(), { method: 'GET' })
+                    .then(function(res){
+                        if(!res.ok) throw new Error('HTTP ' + res.status);
+                        var ct = res.headers.get('content-type') || '';
+                        if(ct.indexOf('application/json') !== -1) return res.json();
+                        return res.text().then(function(t){ try{ return JSON.parse(t); }catch(e){ return t; } });
+                    })
+                    .then(function(data){
+                        var list = toArrayFromResponse(data) || [];
+                        
+                        // Si l'API renvoie un objet clé->message, préserver le message_id
+                        function mapWithIds(obj){
+                            return Object.keys(obj).map(function(k){
+                                var it = obj[k] || {};
+                                if(!it.code_demande) it.code_demande = k;
+                                return it;
+                            });
+                        }
+                        
+                        // Si pas d'items trouvés, tenter explicitement Data (string JSON ou objet)
+                        if((!list || list.length === 0) && data){
+                            try{
+                                var D = data.Data != null ? data.Data : data.data;
+                                if(typeof D === 'string'){
+                                    // D est une string JSON, il faut la parser
+                                    var parsed = JSON.parse(D);
+                                    var arr = toArrayFromResponse(parsed);
+                                    if(Array.isArray(arr)){
+                                        list = arr;
+                                    } else if(parsed && typeof parsed === 'object'){
+                                        list = mapWithIds(parsed);
+                                    }
+                                } else if(D && typeof D === 'object'){
+                                    var arr2 = toArrayFromResponse(D);
+                                    if(Array.isArray(arr2)){
+                                        list = arr2;
+                                    } else {
+                                        list = mapWithIds(D);
+                                    }
+                                }
+                            }catch(e){ /* ignore */ }
+                        }
+                        
+                        // Dernier repli: si data lui-même est un objet clé->transcription
+                        if((!list || !list.length) && data && typeof data === 'object' && !Array.isArray(data)){
+                            try{
+                                var hasEnvelopeKeys = Object.prototype.hasOwnProperty.call(data,'data') || Object.prototype.hasOwnProperty.call(data,'Data');
+                                if(!hasEnvelopeKeys){
+                                    var kList = Object.keys(data);
+                                    if(kList.length && !kList.every(function(k){ return /^\d+$/.test(k); })){
+                                        list = mapWithIds(data);
+                                    }
+                                }
+                            }catch(e){}
+                        }
+
+                        // Affichage direct de la liste
+                        rightContentEl.innerHTML = renderTranscription(list, { apiExt: apiExt, apiKey: apiKey });
+                        sizeRightPanelToContent();
+                        bindTranscriptionPlayClicks();
+                        bindTranscriptionPreviewClicks();
+                        bindTranscriptionDeleteClicks();
+                    })
+                    .catch(function(err){
+                        rightContentEl.innerHTML = '<div class="sp-error" style="padding:12px;">' + (lang && lang['error_loading_transcription'] ? lang['error_loading_transcription'] : 'Cannot load transcription') + ' ('+ escHtml(err.message) +').</div>';
+                    });
+            }catch(e){
+                rightContentEl.innerHTML = '<div class="sp-error" style="padding:12px;">URL invalide: '+ escHtml(e && e.message ? e.message : String(e)) +'</div>';
+            }
+        }
+
         // Convertit base64 -> Blob
         function base64ToBlob(b64, mime){
             mime = mime || 'application/octet-stream';
@@ -1330,7 +1690,7 @@
                 return { mime: mime, b64: b64 };
             }
             // 1) Nouveau workflow: bouton explicite
-            var btns = contentEl.querySelectorAll('button.vm-load[data-endpoint]');
+            var btns = rightContentEl.querySelectorAll('button.vm-load[data-endpoint]');
             btns.forEach(function(btn){
                 var endpoint = btn.getAttribute('data-endpoint');
                 var parent = btn.closest('.vm-audio');
@@ -1393,7 +1753,7 @@
                                     if(parent){ parent.insertAdjacentHTML('beforeend', '<div class="sp-error" style="font-size:12px; margin-top:4px;">Audio indisponible</div>'); }
                                 }catch(e){}
                             })
-                            .finally(function(){ active--; try{ sizePanelToContent(); }catch(e){} next(); });
+                            .finally(function(){ active--; try{ sizeRightPanelToContent(); }catch(e){} next(); });
                     }
                 }
                 next();
@@ -1423,7 +1783,7 @@
                         });
                 }catch(e){ /* ignore */ }
             }
-            var containers = contentEl.querySelectorAll('.vm-audio[data-msg-id]');
+            var containers = rightContentEl.querySelectorAll('.vm-audio[data-msg-id]');
             containers.forEach(function(c){
                 var aud = c.querySelector('audio');
                 if(!aud) return;
@@ -1431,7 +1791,7 @@
                 aud.addEventListener('play', function(){ markAsReadIfNeeded(c); }, { once:true });
             });
             // 2) Compat : ancienne version qui écoutait l'event play sur un <audio data-endpoint>
-            var nodes = contentEl.querySelectorAll('audio[data-endpoint]');
+            var nodes = rightContentEl.querySelectorAll('audio[data-endpoint]');
             nodes.forEach(function(aud){
                 var loaded = false;
                 var endpoint = aud.getAttribute('data-endpoint');
@@ -1476,10 +1836,285 @@
                 aud.addEventListener('play', loadOnceAndPlay, { once:false });
             });
         }
+        // Lecture du fichier audio d'une transcription
+        function bindTranscriptionPlayClicks(){
+            if(!rightContentEl) return;
+            var btns = rightContentEl.querySelectorAll('.transcription-play');
+            btns.forEach(function(btn){
+                btn.addEventListener('click', function(e){
+                    e.stopPropagation();
+                    var filename = btn.getAttribute('data-filename');
+                    var ext = btn.getAttribute('data-ext') || '';
+                    var apiKey = btn.getAttribute('data-key') || '';
+                    if(!filename) return;
+                    
+                    var domain = getCfg(["SipDomain","SipDomaine"]);
+                    domain = normalizeApiDomain(domain);
+                    var fileBase = normalizeApiUrl(localStorage.getItem('TranscriptionUrl')) || (domain + '/celyavox-api/transcription/filebyname');
+                    
+                    var u;
+                    try{
+                        u = new URL(fileBase, window.location.origin);
+                    }catch(e){ return alert('URL invalide'); }
+                    
+                    u.searchParams.set('filename', filename);
+                    if(ext) u.searchParams.set('extension', ext);
+                    if(apiKey) u.searchParams.set('api_key', apiKey);
+                    try{ var pfx = localStorage.getItem('prefixe') || ''; if(pfx) u.searchParams.set('prefixe', pfx); }catch(e){}
+                    
+                    // Créer et afficher un modal avec lecteur audio
+                    var modal = document.createElement('div');
+                    modal.id = 'transcription-audio-modal-' + Math.random().toString(36).substr(2, 9);
+                    modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:10000;';
+                    
+                    var content = document.createElement('div');
+                    content.style.cssText = 'background:white; padding:20px; border-radius:8px; max-width:600px; width:90%; box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+                    
+                    var closeBtn = document.createElement('button');
+                    closeBtn.type = 'button';
+                    closeBtn.innerHTML = '<i class="fa fa-times"></i>';
+                    closeBtn.style.cssText = 'position:absolute; top:10px; right:10px; background:none; border:none; font-size:20px; cursor:pointer; color:#999;';
+                    closeBtn.addEventListener('click', function(){ modal.remove(); });
+                    content.appendChild(closeBtn);
+                    
+                    var loadingMsg = document.createElement('p');
+                    loadingMsg.textContent = lang && lang['loading'] ? lang['loading'] : 'Loading...';
+                    loadingMsg.style.cssText = 'margin:10px 0; color:#666;';
+                    content.appendChild(loadingMsg);
+                    
+                    modal.appendChild(content);
+                    document.body.appendChild(modal);
+                    
+                    // Charger le fichier audio depuis l'API
+                    fetch(u.toString(), { method: 'GET' })
+                        .then(function(res){
+                            if(!res.ok) throw new Error('HTTP ' + res.status);
+                            return res.json();
+                        })
+                        .then(function(response){
+                            // L'API retourne { status: "OK", message: "OK", data: "{\"minetype\":\"audio/wav\",\"audio\":\"base64...\"}" }
+                            var data = response.data;
+                            if(typeof data === 'string'){
+                                try{ data = JSON.parse(data); }catch(e){ throw new Error('Invalid JSON in data field'); }
+                            }
+                            var mime = (data && (data.minetype || data.mimetype)) || 'audio/wav';
+                            var b64 = (data && data.audio) || '';
+                            if(!b64) throw new Error('Aucune donnée audio base64');
+                            
+                            // Créer un élément audio avec amplification
+                            var audioUrl = '';
+                            var blob = base64ToBlob(b64, mime);
+                            if(!blob) throw new Error('Décodage base64 échoué');
+                            
+                            // Appliquer l'amplification (gain de voicemail)
+                            var gain = getVoicemailGain();
+                            amplifyAudioBlob(blob, gain).then(function(finalBlob){
+                                audioUrl = URL.createObjectURL(finalBlob);
+                                
+                                // Remplacer le message de chargement par le lecteur audio
+                                content.removeChild(loadingMsg);
+                                
+                                var audioEl = document.createElement('audio');
+                                audioEl.controls = true;
+                                audioEl.preload = 'auto';
+                                audioEl.src = audioUrl;
+                                audioEl.style.cssText = 'width:100%; margin:10px 0;';
+                                content.appendChild(audioEl);
+                                
+                                try{ audioEl.play(); }catch(e){}
+                            }).catch(function(err){
+                                // Si amplification échoue, jouer sans amplification
+                                audioUrl = URL.createObjectURL(blob);
+                                content.removeChild(loadingMsg);
+                                
+                                var audioEl = document.createElement('audio');
+                                audioEl.controls = true;
+                                audioEl.preload = 'auto';
+                                audioEl.src = audioUrl;
+                                audioEl.style.cssText = 'width:100%; margin:10px 0;';
+                                content.appendChild(audioEl);
+                                
+                                try{ audioEl.play(); }catch(e){}
+                            });
+                        })
+                        .catch(function(err){
+                            // Afficher le message d'erreur
+                            console.error('Erreur chargement audio transcription:', err);
+                            loadingMsg.textContent = (lang && lang['error_loading'] ? lang['error_loading'] : 'Error loading audio') + ': ' + err.message;
+                            loadingMsg.style.color = '#d32f2f';
+                        });
+                    
+                    modal.addEventListener('click', function(e){
+                        if(e.target === modal) modal.remove();
+                    });
+                });
+            });
+        }
+        // Fonction pour amplifier un blob audio
+        function amplifyAudioBlob(blob, gain){
+            return new Promise(function(resolve){
+                if(!blob || !(gain > 1.01)) return resolve(blob);
+                var ctx;
+                try{ ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+                catch(e){ return resolve(blob); }
+                
+                blob.arrayBuffer().then(function(arrBuf){
+                    ctx.decodeAudioData(arrBuf).then(function(audioBuf){
+                        try{
+                            var OfflineCtx = (window.OfflineAudioContext || window.webkitOfflineAudioContext);
+                            if(!OfflineCtx){ return resolve(blob); }
+                            var off = new OfflineCtx(audioBuf.numberOfChannels, audioBuf.length, audioBuf.sampleRate);
+                            var src = off.createBufferSource();
+                            src.buffer = audioBuf;
+                            var g = off.createGain();
+                            g.gain.value = gain;
+                            src.connect(g);
+                            g.connect(off.destination);
+                            src.start(0);
+                            off.startRendering().then(function(rendered){
+                                try{
+                                    var wav = audioBufferToWav(rendered);
+                                    resolve(wav || blob);
+                                }catch(e){ resolve(blob); }
+                            }).catch(function(){ resolve(blob); });
+                        }catch(e){ resolve(blob); }
+                    }).catch(function(){ resolve(blob); });
+                }).catch(function(){ resolve(blob); });
+            });
+        }
+        // Helper pour convertir un AudioBuffer en Wav Blob (réutilisé depuis voicemail)
+        function audioBufferToWav(buffer){
+            var numOfChan = buffer.numberOfChannels;
+            var sampleRate = buffer.sampleRate;
+            var length = buffer.length * numOfChan * 2 + 44;
+            var ab = new ArrayBuffer(length);
+            var view = new DataView(ab);
+            function writeString(view, offset, string){
+                for (var i = 0; i < string.length; i++){
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            }
+            var channels = [];
+            for (var i = 0; i < numOfChan; i++){
+                channels.push(buffer.getChannelData(i));
+            }
+            var interleaved = new Float32Array(buffer.length * numOfChan);
+            var index = 0;
+            var inputIndex = 0;
+            while (index < interleaved.length){
+                for (var i = 0; i < numOfChan; i++){
+                    interleaved[index++] = channels[i][inputIndex];
+                }
+                inputIndex++;
+            }
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + interleaved.length * 2, true);
+            writeString(view, 8, 'WAVE');
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, numOfChan, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * numOfChan * 2, true);
+            view.setUint16(32, numOfChan * 2, true);
+            view.setUint16(34, 16, true);
+            writeString(view, 36, 'data');
+            view.setUint32(40, interleaved.length * 2, true);
+            var offset = 44;
+            for (var i = 0; i < interleaved.length; i++, offset += 2){
+                var s = Math.max(-1, Math.min(1, interleaved[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return new Blob([view], { type: 'audio/wav' });
+        }
+        // Helper pour obtenir le gain d'amplification
+        function getVoicemailGain(){
+            var v = parseFloat(localStorage.getItem('VoicemailGain') || '1.6');
+            if(!isFinite(v) || v < 1) v = 1.6;
+            return Math.min(v, 4.0);
+        }
+        // Afficher la transcription complète en cliquant sur l'aperçu
+        function bindTranscriptionPreviewClicks(){
+            if(!rightContentEl) return;
+            var previews = rightContentEl.querySelectorAll('.transcription-preview');
+            previews.forEach(function(preview){
+                preview.addEventListener('click', function(){
+                    var fullText = preview.getAttribute('data-full-text');
+                    if(!fullText) return;
+                    
+                    var title = lang && lang['transcription'] ? lang['transcription'] : 'Transcription';
+                    var closeBtn = '<button type="button" style="float:right; background:none; border:none; font-size:18px; cursor:pointer; color:#666;" onclick="this.closest(\'.transcription-modal\').remove()">✕</button>';
+                    var modal = '<div class="transcription-modal" style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:9999;">'
+                        + '<div style="background:white; border-radius:8px; padding:20px; max-width:600px; max-height:80vh; overflow:auto; box-shadow:0 4px 6px rgba(0,0,0,0.1);">'
+                        + closeBtn
+                        + '<h3 style="margin-top:0; margin-bottom:15px;">'+ escHtml(title) +'</h3>'
+                        + '<div style="white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.5;">'+ escHtml(fullText) +'</div>'
+                        + '</div>'
+                        + '</div>';
+                    
+                    document.body.insertAdjacentHTML('beforeend', modal);
+                    
+                    // Fermer la modal en cliquant en dehors
+                    document.querySelector('.transcription-modal').addEventListener('click', function(e){
+                        if(e.target === this) this.remove();
+                    });
+                });
+            });
+        }
+        // Suppression d'une transcription
+        function bindTranscriptionDeleteClicks(){
+            if(!rightContentEl) return;
+            var btns = rightContentEl.querySelectorAll('.transcription-delete');
+            btns.forEach(function(btn){
+                btn.addEventListener('click', function(){
+                    var codeDemande = btn.getAttribute('data-code-demande');
+                    var ext = btn.getAttribute('data-ext') || '';
+                    var apiKey = btn.getAttribute('data-key') || '';
+                    if(!codeDemande) return;
+                    
+                    // Demander confirmation
+                    if(!confirm(lang && lang['confirm_delete'] ? lang['confirm_delete'] : 'Êtes-vous sûr de vouloir supprimer cette transcription ?')) return;
+                    
+                    var domain = getCfg(["SipDomain","SipDomaine"]);
+                    domain = normalizeApiDomain(domain);
+                    var deleteBase = normalizeApiUrl(localStorage.getItem('TranscriptionUrl')) || (domain + '/celyavox-api/transcription/deltranscription');
+                    var u;
+                    try{
+                        u = new URL(deleteBase, window.location.origin);
+                    }catch(e){ return alert('URL de suppression invalide'); }
+                    
+                    u.searchParams.set('code_demande', codeDemande);
+                    if(apiKey) u.searchParams.set('api_key', apiKey);
+                    try{ var pfx = localStorage.getItem('prefixe') || ''; if(pfx) u.searchParams.set('prefixe', pfx); }catch(e){}
+                    
+                    var old = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.innerHTML = '<span class="fa fa-circle-o-notch fa-spin"></span>';
+                    
+                    fetch(u.toString(), { method:'GET' })
+                        .then(function(res){
+                            if(!res.ok) throw new Error('HTTP '+res.status);
+                            return res.json().catch(function(){ return { status:'OK' }; });
+                        })
+                        .then(function(js){
+                            // Suppression réussie
+                            var row = btn.closest('tr');
+                            if(row){ row.remove(); try{ sizeRightPanelToContent(); }catch(e){} }
+                        })
+                        .catch(function(err){
+                            alert((lang && lang['delete_failed'] ? lang['delete_failed'] : 'Échec de la suppression') + ': ' + (err && err.message ? err.message : err));
+                        })
+                        .finally(function(){
+                            btn.disabled = false;
+                            btn.innerHTML = old;
+                        });
+                });
+            });
+        }
         // Suppression d'un message vocal
         function bindVoicemailDeleteClicks(){
-            if(!contentEl) return;
-            var btns = contentEl.querySelectorAll('.vm-delete');
+            if(!rightContentEl) return;
+            var btns = rightContentEl.querySelectorAll('.vm-delete');
             btns.forEach(function(btn){
                 btn.addEventListener('click', function(){
                     var id = btn.getAttribute('data-id');
@@ -1506,7 +2141,7 @@
                         .then(function(js){
                             // On considère la suppression réussie si la réponse n'indique pas explicitement une erreur
                             var row = btn.closest('tr');
-                            if(row){ row.remove(); try{ sizePanelToContent(); }catch(e){} }
+                            if(row){ row.remove(); try{ sizeRightPanelToContent(); }catch(e){} }
                         })
                         .catch(function(err){
                             alert('Échec de la suppression: ' + (err && err.message ? err.message : err));
@@ -3556,6 +4191,8 @@
             if(agentBtn) agentBtn.style.display = 'none';
             var dashboardBtn = $("nav-dashboard");
             if(dashboardBtn) dashboardBtn.style.display = 'none';
+            var transcriptionBtn = $("nav-transcription");
+            if(transcriptionBtn) transcriptionBtn.style.display = 'none';
             var favoritesBtn = $("nav-favoris");
 
             var apiExt = ext;
@@ -3600,10 +4237,13 @@
                     var hasVoicemail = normalized.indexOf('voicemail') !== -1;
                     var hasAgent = normalized.indexOf('agent') !== -1;
                     var hasDashboard = normalized.indexOf('dashboard') !== -1;
+                    hasTranscriptionV = normalized.indexOf('transcriptionv') !== -1;
+                    hasTranscriptionM = normalized.indexOf('transcriptionm') !== -1;
 
                     if(vmBtn) vmBtn.style.display = hasVoicemail ? '' : 'none';
                     if(agentBtn) agentBtn.style.display = hasAgent ? '' : 'none';
                     if(dashboardBtn) dashboardBtn.style.display = hasDashboard ? '' : 'none';
+                    if(transcriptionBtn) transcriptionBtn.style.display = hasTranscriptionM ? '' : 'none';
                     if(favoritesBtn) favoritesBtn.style.display = hasDashboard ? 'none' : '';
                     document.body.classList.toggle('has-dashboard', hasDashboard);
 
@@ -3628,6 +4268,7 @@
             { id: "nav-clavier", langKey: "keyboard" },
             { id: "nav-historique", langKey: "history" },
             { id: "nav-voicemail", langKey: "visual_voicemail" },
+            { id: "nav-transcription", langKey: "transcription" },
             { id: "nav-agent", langKey: "agent" },
             { id: "nav-dashboard", langKey: "dashboard" },
             { id: "nav-contacts", langKey: "contacts" },
@@ -3684,6 +4325,8 @@
                     loadHistory();
                 } else if(b.id === 'nav-voicemail'){
                     loadVoicemail();
+                } else if(b.id === 'nav-transcription'){
+                    loadTranscription();
                 } else if(b.id === 'nav-agent'){
                     var agentTitle = lang && lang['agent_panel'] ? lang['agent_panel'] : 'Agent Panel';
                     openPanel(agentTitle, "<div style='padding:12px;'>"+ agentTitle +"</div>", 'agent');

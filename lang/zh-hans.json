@@ -314,5 +314,6 @@
     "pin_to_top" : "固定",
     "voice_mail" : "語音信箱",
     "you_have_new_voice_mail" : "您有 {0} 條新語音郵件消息。",
-    "new_voice_mail" : "新語音信箱留言"
+    "new_voice_mail" : "新语音信箱留言",
+    "transcription" : "转录"
 }

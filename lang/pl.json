@@ -314,5 +314,6 @@
     "pin_to_top" : "Przypięte",
     "voice_mail" : "Poczta głosowa",
     "you_have_new_voice_mail" : "Masz {0} nowych wiadomości poczty głosowej.",
-    "new_voice_mail" : "Nowa wiadomość na poczcie głosowej"
+    "new_voice_mail" : "Nowa wiadomość na poczcie głosowej",
+    "transcription" : "Transkrypcja"
 }

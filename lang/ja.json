@@ -314,5 +314,6 @@
     "pin_to_top" : "固定された",
     "voice_mail" : "ボイスメール",
     "you_have_new_voice_mail" : "{0} 件の新しいボイスメール メッセージがあります。",
-    "new_voice_mail" : "新しいボイスメール メッセージ"
+    "new_voice_mail" : "新しいボイスメールメッセージ",
+    "transcription" : "文字起こし"
 }

@@ -314,5 +314,6 @@
     "pin_to_top" : "Sabitlendi",
     "voice_mail" : "Sesli Posta",
     "you_have_new_voice_mail" : "{0} yeni Sesli Posta mesajınız var.",
-    "new_voice_mail" : "Yeni Sesli Posta Mesajı"
+    \"new_voice_mail\" : \"Yeni Sesli Posta Mesajı\",
+    \"transcription\" : \"Transkripsiyon\"
 }

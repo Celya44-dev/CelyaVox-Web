@@ -1347,6 +1347,7 @@ function fillTranslationLabels(){
         'label-contacts': 'contacts',
         'label-favorites': 'favorites',
         'label-visual_voicemail': 'visual_voicemail',
+        'label-transcription': 'transcription',
         'label-agent': 'agent',
         'label-dashboard': 'dashboard',
         'label-advanced_functions': 'advanced_functions'
@@ -1367,6 +1368,7 @@ function fillTranslationLabels(){
         'nav-contacts': 'contacts',
         'nav-favoris': 'favorites',
         'nav-voicemail': 'visual_voicemail',
+        'nav-transcription': 'transcription',
         'nav-agent': 'agent',
         'nav-dashboard': 'dashboard',
         'nav-fonction-avance': 'advanced_functions'
