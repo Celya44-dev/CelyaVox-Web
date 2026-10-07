@@ -358,7 +358,7 @@ let EnableAccountSettings = (getDbItem("EnableAccountSettings", "1") == "1");   
 let EnableAppearanceSettings = (getDbItem("EnableAppearanceSettings", "1") == "1");     // Controls the Appearance tab in Settings
 let EnableNotificationSettings = (getDbItem("EnableNotificationSettings", "1") == "1"); // Controls the Notifications tab in Settings
 let EnableAlphanumericDial = (getDbItem("EnableAlphanumericDial", "0") == "1");         // Allows calling /[^\da-zA-Z\*\#\+\-\_\.\!\~\'\(\)]/g default is /[^\d\*\#\+]/g 
-let EnableVideoCalling = (getDbItem("EnableVideoCalling", "1") == "1");                 // Enables Video during a call
+let EnableVideoCalling = false;                                                         // Video calls disabled (always false)
 let EnableTextExpressions = (getDbItem("EnableTextExpressions", "1") == "1");           // Enables Expressions (Emoji) glyphs when texting
 let EnableTextDictate = (getDbItem("EnableTextDictate", "1") == "1");                   // Enables Dictate (speech-to-text) when texting
 let EnableRingtone = (getDbItem("EnableRingtone", "1") == "1");                         // Enables a ring tone when an inbound call comes in.  (media/Ringtone_1.mp3)
@@ -3456,7 +3456,7 @@ function ReceiveCall(session) {
         // Asterisk 13 PJ_SIP always sends m=video if endpoint has video codec,
         // even if original invite does not specify video.
         if(lineObj.SipSession.request.body.indexOf("m=video") > -1) {
-            lineObj.SipSession.data.withvideo = true;
+            lineObj.SipSession.data.withvideo = false;
             // The invite may have video, but the buddy may be a contact
             if(buddyObj.type == "contact"){
                 // videoInvite = false;
@@ -3981,7 +3981,7 @@ function AnswerVideoCall(lineNumber) {
     }
 
     // Save Devices
-    lineObj.SipSession.data.withvideo = true;
+    lineObj.SipSession.data.withvideo = false;
     lineObj.SipSession.data.VideoSourceDevice = getVideoSrcID();
     lineObj.SipSession.data.AudioSourceDevice = getAudioSrcID();
     lineObj.SipSession.data.AudioOutputDevice = getAudioOutputID();
@@ -7167,7 +7167,7 @@ function VideoCall(lineObj, dialledNumber, extraHeaders) {
     lineObj.SipSession.data.AudioSourceDevice = getAudioSrcID();
     lineObj.SipSession.data.AudioOutputDevice = getAudioOutputID();
     lineObj.SipSession.data.terminateby = "them";
-    lineObj.SipSession.data.withvideo = true;
+    lineObj.SipSession.data.withvideo = false;
     lineObj.SipSession.data.earlyReject = false;
     lineObj.SipSession.isOnHold = false;
     lineObj.SipSession.delegate = {
@@ -10372,6 +10372,7 @@ function CloseUpSettings(){
     catch(e){}
     try{
         var localVideo = $("#local-video-preview").get(0);
+        if(!localVideo) return; // Video preview not available
         localVideo.srcObject = null;
     }
     catch{}
@@ -13704,8 +13705,8 @@ function ShowMyProfile(){
     AccountHtml += "</div>";
     if(EnableAccountSettings == true && DisableGUISipAccount == false) html += AccountHtml;
 
-    // 2 Audio & Video
-    html += "<div class=UiTextHeading onclick=\"ToggleHeading(this,'Audio_Video_Html')\"><i class=\"fa fa fa-video-camera UiTextHeadingIcon\" style=\"background-color:#208e3c\"></i> "+ lang.audio_video +"</div>"
+    // 2 Audio
+    html += "<div class=UiTextHeading onclick=\"ToggleHeading(this,'Audio_Video_Html')\"><i class=\"fa fa-microphone UiTextHeadingIcon\" style=\"background-color:#208e3c\"></i> "+ lang.audio +"</div>"
 
     var AudioVideoHtml = "<div id=Audio_Video_Html style=\"display:none\">";
 
@@ -13744,48 +13745,6 @@ function ShowMyProfile(){
     AudioVideoHtml += "<div><input type=checkbox id=Settings_EchoCancellation><label for=Settings_EchoCancellation> "+ lang.echo_cancellation +"<label></div>";
     AudioVideoHtml += "<div><input type=checkbox id=Settings_NoiseSuppression><label for=Settings_NoiseSuppression> "+ lang.noise_suppression +"<label></div>";
 
-    if(EnableVideoCalling == true){
-        AudioVideoHtml += "<div class=UiText>"+ lang.camera +":</div>";
-        AudioVideoHtml += "<div style=\"text-align:center\"><select id=previewVideoSrc style=\"width:100%\"></select></div>";
-
-        AudioVideoHtml += "<div class=UiText>"+ lang.frame_rate +":</div>"
-        AudioVideoHtml += "<div class=pill-nav>";
-        AudioVideoHtml += "<input name=Settings_FrameRate id=r40 type=radio value=\"2\"><label class=radio_pill for=r40>2</label>";
-        AudioVideoHtml += "<input name=Settings_FrameRate id=r41 type=radio value=\"5\"><label class=radio_pill for=r41>5</label>";
-        AudioVideoHtml += "<input name=Settings_FrameRate id=r42 type=radio value=\"10\"><label class=radio_pill for=r42>10</label>";
-        AudioVideoHtml += "<input name=Settings_FrameRate id=r43 type=radio value=\"15\"><label class=radio_pill for=r43>15</label>";
-        AudioVideoHtml += "<input name=Settings_FrameRate id=r44 type=radio value=\"20\"><label class=radio_pill for=r44>20</label>";
-        AudioVideoHtml += "<input name=Settings_FrameRate id=r45 type=radio value=\"25\"><label class=radio_pill for=r45>25</label>";
-        AudioVideoHtml += "<input name=Settings_FrameRate id=r46 type=radio value=\"30\"><label class=radio_pill for=r46>30</label>";
-        AudioVideoHtml += "<input name=Settings_FrameRate id=r47 type=radio value=\"\"><label class=radio_pill for=r47><i class=\"fa fa-trash\"></i></label>";
-        AudioVideoHtml += "</div>";
-
-        AudioVideoHtml += "<div class=UiText>"+ lang.quality +":</div>";
-        AudioVideoHtml += "<div class=pill-nav>";
-        AudioVideoHtml += "<input name=Settings_Quality id=r30 type=radio value=\"160\"><label class=radio_pill for=r30><i class=\"fa fa-video-camera\" style=\"transform: scale(0.4)\"></i> HQVGA</label>";
-        AudioVideoHtml += "<input name=Settings_Quality id=r31 type=radio value=\"240\"><label class=radio_pill for=r31><i class=\"fa fa-video-camera\" style=\"transform: scale(0.6)\"></i> QVGA</label>";
-        AudioVideoHtml += "<input name=Settings_Quality id=r32 type=radio value=\"480\"><label class=radio_pill for=r32><i class=\"fa fa-video-camera\" style=\"transform: scale(0.8)\"></i> VGA</label>";
-        AudioVideoHtml += "<input name=Settings_Quality id=r33 type=radio value=\"720\"><label class=radio_pill for=r33><i class=\"fa fa-video-camera\" style=\"transform: scale(1)\"></i> HD</label>";
-        AudioVideoHtml += "<input name=Settings_Quality id=r34 type=radio value=\"\"><label class=radio_pill for=r34><i class=\"fa fa-trash\"></i></label>";
-        AudioVideoHtml += "</div>";
-        
-        AudioVideoHtml += "<div class=UiText>"+ lang.image_orientation +":</div>";
-        AudioVideoHtml += "<div class=pill-nav>";
-        AudioVideoHtml += "<input name=Settings_Orientation id=r20 type=radio value=\"rotateY(0deg)\"><label class=radio_pill for=r20><i class=\"fa fa-address-card\" style=\"transform: rotateY(0deg)\"></i> "+ lang.image_orientation_normal +"</label>";
-        AudioVideoHtml += "<input name=Settings_Orientation id=r21 type=radio value=\"rotateY(180deg)\"><label class=radio_pill for=r21><i class=\"fa fa-address-card\" style=\"transform: rotateY(180deg)\"></i> "+ lang.image_orientation_mirror +"</label>";
-        AudioVideoHtml += "</div>";
-
-        AudioVideoHtml += "<div class=UiText>"+ lang.aspect_ratio +":</div>";
-        AudioVideoHtml += "<div class=pill-nav>";
-        AudioVideoHtml += "<input name=Settings_AspectRatio id=r10 type=radio value=\"1\"><label class=radio_pill for=r10><i class=\"fa fa-square-o\" style=\"transform: scaleX(1); margin-left: 7px; margin-right: 7px\"></i> 1:1</label>";
-        AudioVideoHtml += "<input name=Settings_AspectRatio id=r11 type=radio value=\"1.33\"><label class=radio_pill for=r11><i class=\"fa fa-square-o\" style=\"transform: scaleX(1.33); margin-left: 5px; margin-right: 5px;\"></i> 4:3</label>";
-        AudioVideoHtml += "<input name=Settings_AspectRatio id=r12 type=radio value=\"1.77\"><label class=radio_pill for=r12><i class=\"fa fa-square-o\" style=\"transform: scaleX(1.77); margin-right: 3px;\"></i> 16:9</label>";
-        AudioVideoHtml += "<input name=Settings_AspectRatio id=r13 type=radio value=\"\"><label class=radio_pill for=r13><i class=\"fa fa-trash\"></i></label>";
-        AudioVideoHtml += "</div>";
-
-        AudioVideoHtml += "<div class=UiText>"+ lang.preview +":</div>";
-        AudioVideoHtml += "<div style=\"text-align:center; margin-top:10px\"><video id=local-video-preview class=previewVideo muted playsinline></video></div>";
-    }
 
     AudioVideoHtml += "</div>";
 
@@ -14278,6 +14237,7 @@ function ShowMyProfile(){
                 console.log("Call to change WebCam ("+ this.value +")");
         
                 var localVideo = $("#local-video-preview").get(0);
+                if(!localVideo) return; // Video preview not available
                 localVideo.muted = true;
                 localVideo.playsinline = true;
                 localVideo.autoplay = true;
@@ -14341,6 +14301,7 @@ function ShowMyProfile(){
                 console.log("Call to change Frame Rate ("+ this.value +")");
         
                 var localVideo = $("#local-video-preview").get(0);
+                if(!localVideo) return; // Video preview not available
                 localVideo.muted = true;
                 localVideo.playsinline = true;
                 localVideo.autoplay = true;
@@ -14392,6 +14353,7 @@ function ShowMyProfile(){
                 console.log("Call to change Video Height ("+ this.value +")");
         
                 var localVideo = $("#local-video-preview").get(0);
+                if(!localVideo) return; // Video preview not available
                 localVideo.muted = true;
                 localVideo.playsinline = true;
                 localVideo.autoplay = true;
@@ -14443,6 +14405,7 @@ function ShowMyProfile(){
                 console.log("Call to change Aspect Ratio ("+ this.value +")");
         
                 var localVideo = $("#local-video-preview").get(0);
+                if(!localVideo) return; // Video preview not available
                 localVideo.muted = true;
                 localVideo.playsinline = true;
                 localVideo.autoplay = true;
@@ -14486,6 +14449,7 @@ function ShowMyProfile(){
         
             // Note: Only works over HTTPS or via localhost!!
             var localVideo = $("#local-video-preview").get(0);
+            if(!localVideo) return; // Video element not found (video disabled)
             localVideo.muted = true;
             localVideo.playsinline = true;
             localVideo.autoplay = true;
@@ -15025,20 +14989,20 @@ function ChangeSettings(lineNum, obj){
             items.push({value: "output-"+ devideId, icon : "fa fa-volume-up", text: DisplayName, isDisabled : disabled });
         }
     }
-    // Cameras
-    if(session.data.withvideo == true){
-        items.push({value: "", icon : null, text: "-" });
-        items.push({value: "", icon : null, text: lang.camera, isHeader: true });
-        for (var i = 0; i < VideoinputDevices.length; ++i) {
-            var deviceInfo = VideoinputDevices[i];
-            var devideId = deviceInfo.deviceId;
-            var DisplayName = (deviceInfo.label)? deviceInfo.label : "Webcam";
-            if(DisplayName.indexOf("(") > 0) DisplayName = DisplayName.substring(0,DisplayName.indexOf("("));
-            var disabled = (session.data.VideoSourceDevice == devideId);
-
-            items.push({value: "video-"+ devideId, icon : "fa fa-video-camera", text: DisplayName, isDisabled : disabled });
-        }
-    }
+    // Cameras - DISABLED (video calls disabled)
+    // if(session.data.withvideo == true){
+    //     items.push({value: "", icon : null, text: "-" });
+    //     items.push({value: "", icon : null, text: lang.camera, isHeader: true });
+    //     for (var i = 0; i < VideoinputDevices.length; ++i) {
+    //         var deviceInfo = VideoinputDevices[i];
+    //         var devideId = deviceInfo.deviceId;
+    //         var DisplayName = (deviceInfo.label)? deviceInfo.label : "Webcam";
+    //         if(DisplayName.indexOf("(") > 0) DisplayName = DisplayName.substring(0,DisplayName.indexOf("("));
+    //         var disabled = (session.data.VideoSourceDevice == devideId);
+    // 
+    //         items.push({value: "video-"+ devideId, icon : "fa fa-video-camera", text: DisplayName, isDisabled : disabled });
+    //     }
+    // }
 
     var menu = {
         selectEvent : function( event, ui ) {
