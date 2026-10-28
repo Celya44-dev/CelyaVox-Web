@@ -15,7 +15,7 @@
 
 // Global Settings
 // ===============
-const appversion = "1.0.8";
+const appversion = "1.1.0";
 const sipjsversion = "0.20.0";
 const electron_version_needed = "1.0.7"; // Version minimale de l'application Electron requise
 const navUserAgent = window.navigator.userAgent;  // TODO: change to Navigator.userAgentData
@@ -8250,8 +8250,12 @@ function QuickFindBuddy(obj, lineNum){
 // Call Transfer
 // =============
 function handleEndButton(lineNum){
+    var isConferenceMode = $("#line-"+ lineNum +"-btn-End").attr('data-conference-mode') === 'true';
     var isTransferMode = $("#line-"+ lineNum +"-btn-End").attr('data-transfer-mode') === 'true';
-    if(isTransferMode){
+    
+    if(isConferenceMode){
+        CancelConference(lineNum);
+    } else if(isTransferMode){
         unholdSession(lineNum);
     } else {
         endSession(lineNum);
@@ -8298,6 +8302,16 @@ function CancelTransferSession(lineNum){
     var session = lineObj.SipSession;
     if(session.data.childsession){
         console.log("Child Transfer call detected:", session.data.childsession.state);
+        
+        // Stop Early Media Ringtone when canceling transfer
+        if(session.data.childsession.data && session.data.childsession.data.earlyMedia){
+            session.data.childsession.data.earlyMedia.pause();
+            session.data.childsession.data.earlyMedia.removeAttribute('src');
+            session.data.childsession.data.earlyMedia.load();
+            session.data.childsession.data.earlyMedia = null;
+            console.log("Transfer: Early Media Stopped on Cancel");
+        }
+        
         session.data.childsession.dispose().then(function(){
             session.data.childsession = null;
         }).catch(function(error){
@@ -8527,6 +8541,15 @@ function AttendedTransfer(lineNum){
     newSession.data = {}
     newSession.delegate = {
         onBye: function(sip){
+            // Stop Early Media Ringtone
+            if(newSession.data.earlyMedia){
+                newSession.data.earlyMedia.pause();
+                newSession.data.earlyMedia.removeAttribute('src');
+                newSession.data.earlyMedia.load();
+                newSession.data.earlyMedia = null;
+                console.log("Transfer: Early Media Stopped on BYE");
+            }
+            
             console.log("New call session ended with BYE");
             newCallStatus.html(lang.call_ended);
             session.data.transfer[transferId].disposition = "bye";
@@ -8591,11 +8614,52 @@ $("#line-"+ lineNum +"-msg").html(lang.attended_transfer_call_terminated);
                 $("#line-" + lineNum + "-msg").html(lang.attended_transfer_call_started);
             },
             onProgress:function(sip){
+                console.log("Transfer Progress:", sip.message.statusCode);
                 newCallStatus.html(lang.ringing);
                 session.data.transfer[transferId].disposition = "progress";
                 session.data.transfer[transferId].dispositionTime = utcDateNow();
 
                 $("#line-" + lineNum + "-msg").html(lang.attended_transfer_call_started);
+
+                // Play Early Media Ringtone for Transfer Call (180 Ringing)
+                if(sip.message.statusCode == 180){
+                    var soundFile = audioBlobs.EarlyMedia_European;
+                    if(UserLocale().indexOf("us") > -1) soundFile = audioBlobs.EarlyMedia_US;
+                    if(UserLocale().indexOf("gb") > -1) soundFile = audioBlobs.EarlyMedia_UK;
+                    if(UserLocale().indexOf("au") > -1) soundFile = audioBlobs.EarlyMedia_Australia;
+                    if(UserLocale().indexOf("jp") > -1) soundFile = audioBlobs.EarlyMedia_Japan;
+
+                    console.log("Transfer Early Media Audio:", soundFile.url);
+                    
+                    if(!newSession.data.earlyMedia){
+                        var earlyMedia = new Audio(soundFile.blob);
+                        earlyMedia.volume = getSpeakerGain();
+                        earlyMedia.preload = "auto";
+                        earlyMedia.loop = true;
+                        earlyMedia.oncanplaythrough = function(e) {
+                            if (typeof earlyMedia.sinkId !== 'undefined' && getAudioOutputID() != "default") {
+                                earlyMedia.setSinkId(getAudioOutputID()).then(function() {
+                                    console.log("Transfer: Set sinkId to:", getAudioOutputID());
+                                }).catch(function(e){
+                                    console.warn("Transfer: Failed to apply setSinkId.", e);
+                                });
+                            }
+                            earlyMedia.play().then(function(){
+                                console.log("Transfer: Early Media Ringtone Playing");
+                            }).catch(function(e){
+                                console.warn("Transfer: Unable to play early media audio file.", e);
+                            }); 
+                        }
+                        newSession.data.earlyMedia = earlyMedia;
+                    }
+                    else {
+                        console.log("Transfer: Early Media already playing");
+                    }
+                }
+                else if(sip.message.statusCode === 183){
+                    // 183 Session Progress
+                    console.log("Transfer: Session Progress (183) received");
+                }
 
                 updateLineScroll(lineNum);
             },
@@ -8603,6 +8667,15 @@ $("#line-"+ lineNum +"-msg").html(lang.attended_transfer_call_terminated);
                 console.log("Redirect received:", sip);
             },
             onAccept:function(sip){
+                // Stop Early Media Ringtone
+                if(newSession.data.earlyMedia){
+                    newSession.data.earlyMedia.pause();
+                    newSession.data.earlyMedia.removeAttribute('src');
+                    newSession.data.earlyMedia.load();
+                    newSession.data.earlyMedia = null;
+                    console.log("Transfer: Early Media Stopped");
+                }
+                
                 newCallStatus.html(lang.call_in_progress);
                 session.data.transfer[transferId].disposition = "accepted";
                 session.data.transfer[transferId].dispositionTime = utcDateNow();
@@ -8628,6 +8701,15 @@ $("#line-"+ lineNum +"-msg").html(lang.attended_transfer_call_terminated);
                 updateLineScroll(lineNum);
             },
             onReject:function(sip){
+                // Stop Early Media Ringtone
+                if(newSession.data.earlyMedia){
+                    newSession.data.earlyMedia.pause();
+                    newSession.data.earlyMedia.removeAttribute('src');
+                    newSession.data.earlyMedia.load();
+                    newSession.data.earlyMedia = null;
+                    console.log("Transfer: Early Media Stopped on Reject");
+                }
+                
                 console.log("New call session rejected: ", sip.message.reasonPhrase);
                 newCallStatus.html(lang.call_rejected);
                 session.data.transfer[transferId].disposition = sip.message.reasonPhrase;
@@ -8679,6 +8761,9 @@ function StartConferenceCall(lineNum){
     $("#line-"+ lineNum +"-conference-status").hide();
 
     $("#line-"+ lineNum +"-Conference").show();
+    
+    // Focus sur le champ de saisie des numéros
+    $("#line-"+ lineNum +"-txt-FindConferenceBuddy").focus();
 
     updateLineScroll(lineNum);
 }
@@ -8691,6 +8776,16 @@ function CancelConference(lineNum){
     var session = lineObj.SipSession;
     if(session.data.childsession){
         console.log("Child Conference call detected:", session.data.childsession.state);
+        
+        // Stop Early Media Ringtone when canceling conference
+        if(session.data.childsession.data && session.data.childsession.data.earlyMedia){
+            session.data.childsession.data.earlyMedia.pause();
+            session.data.childsession.data.earlyMedia.removeAttribute('src');
+            session.data.childsession.data.earlyMedia.load();
+            session.data.childsession.data.earlyMedia = null;
+            console.log("Conference: Early Media Stopped on Cancel");
+        }
+        
         session.data.childsession.dispose().then(function(){
             session.data.childsession = null;
         }).catch(function(error){
@@ -8704,6 +8799,9 @@ function CancelConference(lineNum){
 
     $("#line-"+ lineNum +"-btn-Conference").show();
     $("#line-"+ lineNum +"-btn-CancelConference").hide();
+
+    // Reset End button conference mode
+    $("#line-"+ lineNum +"-btn-End").attr('data-conference-mode', 'false');
 
     unholdSession(lineNum);
     $("#line-"+ lineNum +"-Conference").hide();
@@ -8748,6 +8846,15 @@ function CompleteAttendedTransfer(lineNum, session, newSession, transferId){
     if(lineObj == null || lineObj.SipSession == null){
         console.warn("Null line or session");
         return;
+    }
+
+    // Stop Early Media Ringtone when completing transfer
+    if(newSession.data && newSession.data.earlyMedia){
+        newSession.data.earlyMedia.pause();
+        newSession.data.earlyMedia.removeAttribute('src');
+        newSession.data.earlyMedia.load();
+        newSession.data.earlyMedia = null;
+        console.log("Transfer: Early Media Stopped on Complete");
     }
 
     var transferOptions = { 
@@ -8964,6 +9071,15 @@ function ConferenceDial(lineNum){
     newSession.data = {}
     newSession.delegate = {
         onBye: function(sip){
+            // Stop Early Media Ringtone
+            if(newSession.data.earlyMedia){
+                newSession.data.earlyMedia.pause();
+                newSession.data.earlyMedia.removeAttribute('src');
+                newSession.data.earlyMedia.load();
+                newSession.data.earlyMedia = null;
+                console.log("Conference: Early Media Stopped on BYE");
+            }
+            
             console.log("New call session ended with BYE");
             newCallStatus.html(lang.call_ended);
             session.data.confcalls[confCallId].disposition = "bye";
@@ -8975,6 +9091,9 @@ function ConferenceDial(lineNum){
             $("#line-"+ lineNum +"-btn-cancel-conference-dial").hide();
             $("#line-"+ lineNum +"-btn-join-conference-call").hide();
             $("#line-"+ lineNum +"-btn-terminate-conference-call").hide();
+            
+            // Reset End button conference mode when conference ends
+            $("#line-"+ lineNum +"-btn-End").attr('data-conference-mode', 'false');
     
             $("#line-"+ lineNum +"-msg").html(lang.conference_call_terminated);
     
@@ -9025,27 +9144,29 @@ function ConferenceDial(lineNum){
     newSession.stateChange.addListener(function(newState){
         if (newState == SIP.SessionState.Terminated) {
             // Ends the mixed audio, and releases the mic
-            if(session.data.childsession.data.AudioSourceTrack && session.data.childsession.data.AudioSourceTrack.kind == "audio"){
+            if(session.data.childsession && session.data.childsession.data && session.data.childsession.data.AudioSourceTrack && session.data.childsession.data.AudioSourceTrack.kind == "audio"){
                 session.data.childsession.data.AudioSourceTrack.stop();
             }
             // Restore Audio Stream as it was changed
             if(session.data.AudioSourceTrack && session.data.AudioSourceTrack.kind == "audio"){
                 var pc = session.sessionDescriptionHandler.peerConnection;
-                pc.getSenders().forEach(function (RTCRtpSender) {
-                    if(RTCRtpSender.track && RTCRtpSender.track.kind == "audio") {
-                        RTCRtpSender.replaceTrack(session.data.AudioSourceTrack).then(function(){
-                            if(session.data.ismute){
-                                RTCRtpSender.track.enabled = false;
-                            }
-                            else {
-                                RTCRtpSender.track.enabled = true;
-                            }
-                        }).catch(function(){
-                            console.error(e);
-                        });
-                        session.data.AudioSourceTrack = null;
-                    }
-                });
+                if(pc) {
+                    pc.getSenders().forEach(function (RTCRtpSender) {
+                        if(RTCRtpSender.track && RTCRtpSender.track.kind == "audio") {
+                            RTCRtpSender.replaceTrack(session.data.AudioSourceTrack).then(function(){
+                                if(session.data.ismute){
+                                    RTCRtpSender.track.enabled = false;
+                                }
+                                else {
+                                    RTCRtpSender.track.enabled = true;
+                                }
+                            }).catch(function(e){
+                                console.error("Failed to replace track:", e);
+                            });
+                            session.data.AudioSourceTrack = null;
+                        }
+                    });
+                }
             }
         }
     });
@@ -9060,18 +9181,78 @@ function ConferenceDial(lineNum){
                 $("#line-" + lineNum + "-msg").html(lang.conference_call_started);
             },
             onProgress:function(sip){
+                console.log("Conference Progress:", sip.message.statusCode);
                 newCallStatus.html(lang.ringing);
                 session.data.confcalls[confCallId].disposition = "progress";
                 session.data.confcalls[confCallId].dispositionTime = utcDateNow();
         
                 $("#line-" + lineNum + "-msg").html(lang.conference_call_started);
 
+                // Play Early Media Ringtone for Conference Call (180 Ringing)
+                if(sip.message.statusCode == 180){
+                    var soundFile = audioBlobs.EarlyMedia_European;
+                    if(UserLocale().indexOf("us") > -1) soundFile = audioBlobs.EarlyMedia_US;
+                    if(UserLocale().indexOf("gb") > -1) soundFile = audioBlobs.EarlyMedia_UK;
+                    if(UserLocale().indexOf("au") > -1) soundFile = audioBlobs.EarlyMedia_Australia;
+                    if(UserLocale().indexOf("jp") > -1) soundFile = audioBlobs.EarlyMedia_Japan;
+
+                    console.log("Conference Early Media Audio:", soundFile.url);
+                    
+                    if(!newSession.data.earlyMedia){
+                        var earlyMedia = new Audio(soundFile.blob);
+                        earlyMedia.volume = getSpeakerGain();
+                        earlyMedia.preload = "auto";
+                        earlyMedia.loop = true;
+                        earlyMedia.oncanplaythrough = function(e) {
+                            if (typeof earlyMedia.sinkId !== 'undefined' && getAudioOutputID() != "default") {
+                                earlyMedia.setSinkId(getAudioOutputID()).then(function() {
+                                    console.log("Conference: Set sinkId to:", getAudioOutputID());
+                                }).catch(function(e){
+                                    console.warn("Conference: Failed to apply setSinkId.", e);
+                                });
+                            }
+                            earlyMedia.play().then(function(){
+                                console.log("Conference: Early Media Ringtone Playing");
+                            }).catch(function(e){
+                                console.warn("Conference: Unable to play early media audio file.", e);
+                            }); 
+                        }
+                        newSession.data.earlyMedia = earlyMedia;
+                    }
+                    else {
+                        console.log("Conference: Early Media already playing");
+                    }
+                }
+                else if(sip.message.statusCode === 183){
+                    // 183 Session Progress
+                    console.log("Conference: Session Progress (183) received");
+                }
+
                 var CancelConferenceDialBtn = $("#line-"+ lineNum +"-btn-cancel-conference-dial");
                 CancelConferenceDialBtn.off('click');
                 CancelConferenceDialBtn.on('click', function(){
-                    newSession.cancel().catch(function(error){
-                        console.warn("Failed to CANCEL", error);
+                    // Stop Early Media Ringtone immediately
+                    if(newSession.data.earlyMedia){
+                        newSession.data.earlyMedia.pause();
+                        newSession.data.earlyMedia.removeAttribute('src');
+                        newSession.data.earlyMedia.load();
+                        newSession.data.earlyMedia = null;
+                        console.log("Conference: Early Media Stopped on Cancel Button");
+                    }
+                    
+                    // Dispose the conference session (not cancel to avoid stateChange listener)
+                    newSession.dispose().then(function(){
+                        session.data.childsession = null;
+                        console.log("Conference session disposed cleanly");
+                        
+                        // Restore the parent session from hold
+                        unholdSession(lineNum);
+                    }).catch(function(error){
+                        console.warn("Failed to DISPOSE conference session", error);
+                        session.data.childsession = null;
+                        unholdSession(lineNum);
                     });
+                    
                     newCallStatus.html(lang.call_cancelled);
                     console.log("New call session canceled");
         
@@ -9084,6 +9265,9 @@ function ConferenceDial(lineNum){
                     updateLineScroll(lineNum);
                 });
                 CancelConferenceDialBtn.show();
+                
+                // Configure End button to call CancelConference when in conference mode
+                $("#line-"+ lineNum +"-btn-End").attr('data-conference-mode', 'true');
 
                 updateLineScroll(lineNum);
             },
@@ -9091,8 +9275,21 @@ function ConferenceDial(lineNum){
                 console.log("Redirect received:", sip);
             },
             onAccept:function(sip){
+                // Stop Early Media Ringtone
+                if(newSession.data.earlyMedia){
+                    newSession.data.earlyMedia.pause();
+                    newSession.data.earlyMedia.removeAttribute('src');
+                    newSession.data.earlyMedia.load();
+                    newSession.data.earlyMedia = null;
+                    console.log("Conference: Early Media Stopped on Accept");
+                }
+                
                 newCallStatus.html(lang.call_in_progress);
                 $("#line-"+ lineNum +"-btn-cancel-conference-dial").hide();
+                
+                // Reset End button conference mode when conference is accepted
+                $("#line-"+ lineNum +"-btn-End").attr('data-conference-mode', 'false');
+                
                 session.data.confcalls[confCallId].complete = true;
                 session.data.confcalls[confCallId].disposition = "accepted";
                 session.data.confcalls[confCallId].dispositionTime = utcDateNow();
@@ -9212,6 +9409,15 @@ function ConferenceDial(lineNum){
                 updateLineScroll(lineNum);
             },
             onReject:function(sip){
+                // Stop Early Media Ringtone
+                if(newSession.data.earlyMedia){
+                    newSession.data.earlyMedia.pause();
+                    newSession.data.earlyMedia.removeAttribute('src');
+                    newSession.data.earlyMedia.load();
+                    newSession.data.earlyMedia = null;
+                    console.log("Conference: Early Media Stopped on Reject");
+                }
+                
                 console.log("New call session rejected: ", sip.message.reasonPhrase);
                 newCallStatus.html(lang.call_rejected);
                 session.data.confcalls[confCallId].disposition = sip.message.reasonPhrase;
@@ -9223,6 +9429,9 @@ function ConferenceDial(lineNum){
                 $("#line-"+ lineNum +"-btn-cancel-conference-dial").hide();
                 $("#line-"+ lineNum +"-btn-join-conference-call").hide();
                 $("#line-"+ lineNum +"-btn-terminate-conference-call").hide();
+                
+                // Reset End button conference mode when conference is rejected
+                $("#line-"+ lineNum +"-btn-End").attr('data-conference-mode', 'false');
         
                 $("#line-"+ lineNum +"-msg").html(lang.conference_call_rejected);
         
