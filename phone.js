@@ -3798,7 +3798,14 @@ function AnswerAudioCall(lineNumber) {
     if(activeLines.length > 0) {
         console.log("[FIX] Found " + activeLines.length + " active call(s). Putting them on hold to prevent auto-conference.");
         activeLines.forEach(function(activeLine) {
+            // Check if the call is currently on hold by looking at the last hold event
+            var isOnHold = false;
             if(activeLine.SipSession.data.hold && activeLine.SipSession.data.hold.length > 0) {
+                var lastEvent = activeLine.SipSession.data.hold[activeLine.SipSession.data.hold.length - 1];
+                isOnHold = (lastEvent.event === "hold");
+            }
+            
+            if(isOnHold) {
                 // Already on hold, skip
                 console.log("[FIX] Line " + activeLine.LineNumber + " is already on hold.");
             } else {
@@ -4149,7 +4156,7 @@ function onInviteAccepted(lineObj, includeVideo, response){
     }, 1000);
     session.isOnHold = false;
     session.data.started = true;
-    
+        
     // [FIX] Mark that this line has been explicitly accepted to prevent auto-conference
     session.data.manuallyAccepted = true;
     console.log("[FIX] Line " + lineObj.LineNumber + " marked as manually accepted. Preventing unintended conference bridging.");
@@ -9641,8 +9648,9 @@ function unholdSession(lineNum) {
                 $("#line-" + lineNum + "-btn-Unhold").hide();
                 $("#line-" + lineNum + "-msg").html(lang.call_in_progress);
 
+                // Clear hold state so the call can be put on hold again if needed
+                session.data.hold = [];
                 // Log Hold
-                if(!session.data.hold) session.data.hold = [];
                 session.data.hold.push({ event: "unhold", eventTime: utcDateNow() });
 
                 updateLineScroll(lineNum);
