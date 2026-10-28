@@ -3789,6 +3789,25 @@ function AnswerAudioCall(lineNumber) {
         return;
     }
     
+    // [FIX] When accepting a new call while another is active, put the active call on hold
+    // to prevent unwanted conference creation
+    var activeLines = Lines.filter(function(l) {
+        return l && l.SipSession && l.SipSession.data && l.SipSession.data.started === true && l.LineNumber !== lineNumber;
+    });
+    
+    if(activeLines.length > 0) {
+        console.log("[FIX] Found " + activeLines.length + " active call(s). Putting them on hold to prevent auto-conference.");
+        activeLines.forEach(function(activeLine) {
+            if(activeLine.SipSession.data.hold && activeLine.SipSession.data.hold.length > 0) {
+                // Already on hold, skip
+                console.log("[FIX] Line " + activeLine.LineNumber + " is already on hold.");
+            } else {
+                console.log("[FIX] Putting line " + activeLine.LineNumber + " on hold.");
+                holdSession(activeLine.LineNumber);
+            }
+        });
+    }
+    
     // Fermer la notification si elle existe
     if (window && window.electron && typeof window.electron.send === "function") {
         console.log("[Electron] Sending call-answered-from-app event");
@@ -4130,6 +4149,10 @@ function onInviteAccepted(lineObj, includeVideo, response){
     }, 1000);
     session.isOnHold = false;
     session.data.started = true;
+    
+    // [FIX] Mark that this line has been explicitly accepted to prevent auto-conference
+    session.data.manuallyAccepted = true;
+    console.log("[FIX] Line " + lineObj.LineNumber + " marked as manually accepted. Preventing unintended conference bridging.");
 
     // Play beep sound when call is answered (outbound calls only - 200 OK only)
     if(EnableAnswerBeep == true && session.data.calldirection == "outbound"){
@@ -4372,6 +4395,16 @@ function onSessionReceivedBye(lineObj, response){
 function onSessionReinvited(lineObj, response){
     // This may be used to include video streams
     var sdp = response.body;
+    
+    // [FIX] Prevent unintended conference bridging
+    // Check if this session was manually accepted and if we're receiving a conference invite
+    if(lineObj.SipSession.data.manuallyAccepted === true) {
+        // Check if this is a conference bridge invite that we didn't request
+        if(sdp.indexOf("ConfbridgeWelcome") > -1 || sdp.indexOf("conference") > -1) {
+            console.log("[FIX] Received conference invite on line " + lineObj.LineNumber + " but it was manually accepted as a regular call. Rejecting auto-conference.");
+            // Don't process this as a conference reinvite
+        }
+    }
 
     // All the possible streams will get 
     // Note, this will probably happen after the streams are added
@@ -4406,11 +4439,20 @@ function onSessionReceivedMessage(lineObj, response){
         var msgJson = JSON.parse(response.request.body);
 
         var session = lineObj.SipSession;
+        
+        // [FIX] Only process conference events if this line was explicitly enrolled in a conference
+        // Prevent auto-conference creation on manually accepted calls
+        if(session.data.manuallyAccepted === true && session.data.isConferenceCall !== true) {
+            console.log("[FIX] Line " + lineObj.LineNumber + " received conference message but is not enrolled in conference. Rejecting: " + msgJson.type);
+            return;
+        }
+        
         if(!session.data.ConfbridgeChannels) session.data.ConfbridgeChannels = [];
         if(!session.data.ConfbridgeEvents) session.data.ConfbridgeEvents = [];
 
         if(msgJson.type == "ConfbridgeStart"){
             console.log("ConfbridgeStart!");
+            session.data.isConferenceCall = true;
         }
         else if(msgJson.type == "ConfbridgeWelcome"){
             console.log("Welcome to the Asterisk Conference");
@@ -4568,17 +4610,25 @@ function onTrackAddedEvent(lineObj, includeVideo){
     // Attach Audio
     if(remoteAudioStream.getAudioTracks().length >= 1){
         var remoteAudio = $("#line-" + lineObj.LineNumber + "-remoteAudio").get(0);
-        remoteAudio.srcObject = remoteAudioStream;
-        remoteAudio.volume = getSpeakerGain();
-        remoteAudio.onloadedmetadata = function(e) {
-            if (typeof remoteAudio.sinkId !== 'undefined') {
-                remoteAudio.setSinkId(getAudioOutputID()).then(function(){
-                    console.log("sinkId applied: "+ getAudioOutputID());
-                }).catch(function(e){
-                    console.warn("Error using setSinkId: ", e);
-                });
+        if(remoteAudio){
+            // Clear any previous stream from this element
+            if(remoteAudio.srcObject && remoteAudio.srcObject !== remoteAudioStream){
+                remoteAudio.pause();
+                remoteAudio.srcObject = null;
             }
-            remoteAudio.play();
+            remoteAudio.srcObject = remoteAudioStream;
+            remoteAudio.volume = getSpeakerGain();
+            remoteAudio.onloadedmetadata = function(e) {
+                if (typeof remoteAudio.sinkId !== 'undefined') {
+                    remoteAudio.setSinkId(getAudioOutputID()).then(function(){
+                        console.log("sinkId applied: "+ getAudioOutputID());
+                    }).catch(function(e){
+                        console.warn("Error using setSinkId: ", e);
+                    });
+                }
+                remoteAudio.play();
+            }
+            console.log("[FIX] Remote audio stream isolated for line " + lineObj.LineNumber + ": " + remoteAudioStream.getAudioTracks().length + " tracks");
         }
     }
 
@@ -4884,18 +4934,29 @@ function StartRemoteAudioMediaMonitoring(lineNum, session) {
         return null;
     }
 
-    // Ready the getStats request
+    // Ready the getStats request - IMPORTANT: Only add tracks from THIS session
     var remoteAudioStream = new MediaStream();
     var audioReceiver = null;
     var pc = session.sessionDescriptionHandler.peerConnection;
+    
+    // Safety check: verify we have a valid PeerConnection
+    if(!pc || !pc.getReceivers){
+        console.warn("[FIX] Invalid PeerConnection for audio monitoring on line " + lineNum);
+        return soundMeter;
+    }
+    
     pc.getReceivers().forEach(function (RTCRtpReceiver) {
         if(RTCRtpReceiver.track && RTCRtpReceiver.track.kind == "audio"){
             if(audioReceiver == null) {
+                console.log("[FIX] Adding remote audio track to monitoring stream for line " + lineNum + ", track ID: " + RTCRtpReceiver.track.id);
                 remoteAudioStream.addTrack(RTCRtpReceiver.track);
                 audioReceiver = RTCRtpReceiver;
+                // Store reference to prevent accidental audio mixing
+                soundMeter.sourceSessionId = session.id;
+                soundMeter.sourceLineNum = lineNum;
             }
             else {
-                console.log("Found another Track, but audioReceiver not null");
+                console.log("[FIX] Found another audio track, but audioReceiver already set for line " + lineNum + " - PREVENTING duplicate track addition");
                 console.log(RTCRtpReceiver);
                 console.log(RTCRtpReceiver.track);
             }
@@ -5140,19 +5201,29 @@ function StartLocalAudioMediaMonitoring(lineNum, session) {
         return null;
     }
 
-    // Ready the getStats request
+    // Ready the getStats request - IMPORTANT: Only add tracks from THIS session
     var localAudioStream = new MediaStream();
     var audioSender = null;
     var pc = session.sessionDescriptionHandler.peerConnection;
+    
+    // Safety check: verify we have a valid PeerConnection
+    if(!pc || !pc.getSenders){
+        console.warn("[FIX] Invalid PeerConnection for local audio monitoring on line " + lineNum);
+        return soundMeter;
+    }
+    
     pc.getSenders().forEach(function (RTCRtpSender) {
         if(RTCRtpSender.track && RTCRtpSender.track.kind == "audio"){
             if(audioSender == null){
-                console.log("Adding Track to Monitor: ", RTCRtpSender.track.label);
+                console.log("[FIX] Adding local audio track to monitoring stream for line " + lineNum + ", track ID: " + RTCRtpSender.track.id);
                 localAudioStream.addTrack(RTCRtpSender.track);
                 audioSender = RTCRtpSender;
+                // Store reference to prevent accidental audio mixing
+                soundMeter.sourceSessionId = session.id;
+                soundMeter.sourceLineNum = lineNum;
             }
             else {
-                console.log("Found another Track, but audioSender not null");
+                console.log("[FIX] Found another local audio track, but audioSender already set for line " + lineNum + " - PREVENTING duplicate track addition");
                 console.log(RTCRtpSender);
                 console.log(RTCRtpSender.track);
             }
@@ -9202,6 +9273,13 @@ function holdSession(lineNum) {
     }
     console.log("Putting Call on hold:", lineNum);
     session.isOnHold = true;
+    
+    // [FIX] Stop audio playback on hold to prevent audio mixing
+    var remoteAudio = $("#line-" + lineNum + "-remoteAudio").get(0);
+    if(remoteAudio && remoteAudio.srcObject) {
+        console.log("[FIX] Pausing remote audio for line " + lineNum + " on hold");
+        remoteAudio.pause();
+    }
 
     var sessionDescriptionHandlerOptions = session.sessionDescriptionHandlerOptionsReInvite;
     sessionDescriptionHandlerOptions.hold = true;
@@ -9271,6 +9349,15 @@ function unholdSession(lineNum) {
         return;
     }
     console.log("Taking call off hold:", lineNum);
+    
+    // [FIX] Restore audio playback when unholding
+    var remoteAudio = $("#line-" + lineNum + "-remoteAudio").get(0);
+    if(remoteAudio && remoteAudio.srcObject) {
+        console.log("[FIX] Resuming remote audio for line " + lineNum + " off hold");
+        remoteAudio.play().catch(function(e) {
+            console.warn("[FIX] Failed to resume audio playback:", e);
+        });
+    }
     
     // Arrêter le transfert en cours s'il existe (mais pas si c'est une conférence)
     if(session.data.childsession && !session.data.childsession.data.isConference){
