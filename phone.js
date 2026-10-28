@@ -1581,6 +1581,7 @@ function PrepareIndexDB(){
 function UpdateUI(){
     var windowWidth = $(window).outerWidth()
     var windowHeight = $(window).outerHeight();
+    
     if(windowWidth > UiMaxWidth){
         $("#leftContentTable").css("border-left-width", "1px");
         if(selectedBuddy == null && selectedLine == null) {
@@ -4264,6 +4265,9 @@ function onInviteAccepted(lineObj, includeVideo, response){
         // Show the Call
         $("#line-" + lineObj.LineNumber + "-ActiveCall").show();
     }
+
+    // Set focus to the newly answered call
+    SelectLine(lineObj.LineNumber);
 
     UpdateBuddyList()
     updateLineScroll(lineObj.LineNumber);
@@ -11008,8 +11012,6 @@ function SelectLine(lineNum){
         }
     }
 
-    console.log("Selecting Line : "+ lineObj.LineNumber);
-
     // Can only display one thing on the Right
     $(".streamSelected").each(function () {
         $(this).prop('class', 'stream');
@@ -11025,7 +11027,10 @@ function SelectLine(lineNum){
     // Update Lines List
     for(var l = 0; l < Lines.length; l++) {
         var classStr = (Lines[l].LineNumber == lineObj.LineNumber)? "buddySelected" : "buddy";
-        if(Lines[l].SipSession != null) classStr = (Lines[l].SipSession.isOnHold)? "buddyActiveCallHollding" : "buddyActiveCall";
+        // Only override with active call status if line is NOT selected
+        if(Lines[l].LineNumber != lineObj.LineNumber && Lines[l].SipSession != null) {
+            classStr = (Lines[l].SipSession.isOnHold)? "buddyActiveCallHollding" : "buddyActiveCall";
+        }
 
         $("#line-" + Lines[l].LineNumber).prop('class', classStr);
         Lines[l].IsSelected = (Lines[l].LineNumber == lineObj.LineNumber);
@@ -11035,6 +11040,9 @@ function SelectLine(lineNum){
         $("#contact-" + Buddies[b].identity).prop("class", "buddy");
         Buddies[b].IsSelected = false;
     }
+
+    // Update the global selectedLine variable
+    selectedLine = lineObj.LineNumber;
 
     // Change to Stream if in Narrow view
     UpdateUI();
@@ -11892,9 +11900,13 @@ function UpdateBuddyList(){
     for(var l = 0; l < Lines.length; l++) {
 
         var classStr = (Lines[l].IsSelected)? "buddySelected" : "buddy";
-        if(Lines[l].SipSession != null) classStr = (Lines[l].SipSession.isOnHold)? "buddyActiveCallHollding" : "buddyActiveCall";
+        // Only override with active call status if line is NOT selected
+        if(Lines[l].IsSelected == false && Lines[l].SipSession != null) {
+            classStr = (Lines[l].SipSession.isOnHold)? "buddyActiveCallHollding" : "buddyActiveCall";
+        }
 
-        var html = "<div id=\"line-"+ Lines[l].LineNumber +"\" class="+ classStr +" onclick=\"SelectLine('"+ Lines[l].LineNumber +"')\">";
+        // Removed onclick attribute - events are now handled via jQuery event delegation below
+        var html = "<div id=\"line-"+ Lines[l].LineNumber +"\" class="+ classStr +">";
         if(Lines[l].IsSelected == false && Lines[l].SipSession && Lines[l].SipSession.data.started != true && Lines[l].SipSession.data.calldirection == "inbound"){
             html += "<span id=\"line-"+ Lines[l].LineNumber +"-ringing\" class=missedNotifyer style=\"padding-left: 5px; padding-right: 5px; width:unset\"><i class=\"fa fa-phone\"></i> "+ lang.state_ringing +"</span>";
         }
@@ -11913,6 +11925,14 @@ function UpdateBuddyList(){
     // Afficher la gestion des lignes en cours dans actionArea
     if(callCount > 0){
         $("#actionArea").empty().append(linesHtml).show();
+        
+        // Attach click events to line elements using jQuery event delegation
+        // This survives DOM recreation and prevents race conditions
+        $("#actionArea").off('click', '[id^="line-"]').on('click', '[id^="line-"]', function(e) {
+            var lineId = $(this).attr('id');
+            var lineNum = lineId.replace('line-', '');
+            SelectLine(lineNum);
+        });
     }
 
     // End here if they are not using the buddy system
