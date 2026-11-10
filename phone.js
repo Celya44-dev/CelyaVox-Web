@@ -22,6 +22,37 @@ const navUserAgent = window.navigator.userAgent;  // TODO: change to Navigator.u
 const instanceID = String(Date.now());
 const localDB = window.localStorage;
 
+// Wrapper pour envoyer les logs au fichier debug.log via IPC
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
+
+function sendLogToFile(message, level = 'INFO') {
+  if (window.logToFile && typeof window.logToFile === 'function') {
+    try {
+      window.logToFile(message, level);
+    } catch (e) {
+      // Silently ignore errors
+    }
+  }
+}
+
+// Override pour envoyer aussi au fichier
+console.log = function(...args) {
+  originalConsoleLog.apply(console, args);
+  sendLogToFile(args.join(' '), 'INFO');
+};
+
+console.error = function(...args) {
+  originalConsoleError.apply(console, args);
+  sendLogToFile(args.join(' '), 'ERROR');
+};
+
+console.warn = function(...args) {
+  originalConsoleWarn.apply(console, args);
+  sendLogToFile(args.join(' '), 'WARN');
+};
+
 // Set the following to null to disable
 let welcomeScreen = null;
 
@@ -117,7 +148,10 @@ let maxFrameRate = getDbItem("FrameRate", "");                           // Sugg
 let videoHeight = getDbItem("VideoHeight", "");                          // Suggests a video height (and therefor picture quality) to your webcam.
 let MaxVideoBandwidth = parseInt(getDbItem("MaxVideoBandwidth", "2048")); // Specifies the maximum bandwidth (in Kb/s) for your outgoing video stream. e.g: 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | -1 to disable
 let videoAspectRatio = getDbItem("AspectRatio", "1.33");                  // Suggests an aspect ratio (1:1 = 1 | 4:3 = 0.75 | 16:9 = 0.5625) to your webcam.
-let NotificationsActive = (getDbItem("Notifications", "0") == "1");
+
+
+let NotificationsActive = (getDbItem("Notifications", "1") == "1");
+console.log(`✅ Notifications FINALE - NotificationsActive: ${NotificationsActive}`);
 
 let StreamBuffer = parseInt(getDbItem("StreamBuffer", 50));                 // The amount of rows to buffer in the Buddy Stream
 let MaxDataStoreDays = parseInt(getDbItem("MaxDataStoreDays", 0));          // Defines the maximum amount of days worth of data (calls, recordings, messages, etc) to store locally. 0=Stores all data always. >0 Trims n days back worth of data at various events where. 
@@ -187,6 +221,48 @@ if (typeof window.onConfigUpdate === 'function') {
       if (config.audio.ringerGain !== null && config.audio.ringerGain !== undefined) {
         applyRingerGainFromConfig(config.audio.ringerGain);
       }
+    }
+
+    // Appliquer la configuration UI (Notifications, profilePicture, CustomRingtone)
+    if (config.ui) {
+      console.log(`🎛️  Application de la configuration UI...`);
+      
+      // Charger Notifications depuis config.ini si disponible et pas encore dans localStorage
+      if (config.ui.Notifications !== undefined && config.ui.Notifications !== null) {
+        const notificationsValue = config.ui.Notifications ? "1" : "0";
+        if (!localDB.getItem("Notifications")) {
+          localDB.setItem("Notifications", notificationsValue);
+          console.log(`✅ Notifications défini depuis config.ini: ${notificationsValue}`);
+        } else {
+          console.log(`ℹ️  Notifications déjà présent dans le local storage, pas de modification`);
+        }
+      }
+      
+      // Charger profilePicture et CustomRingtone en asynchrone
+      (async () => {
+        if (config.ui.profilePicture && config.configDirectory) {
+          const storedPicture = localDB.getItem("profilePicture");
+          const isDefaultPicture = (storedPicture && storedPicture.endsWith("GKgAjRjfmfqr4QICzrPA9eJUca0zfzuwluGlUA3z80iTByatAAAAAA="));
+          
+          if (!storedPicture || isDefaultPicture) {
+            console.log(`🔄 Chargement de profilePicture depuis config.ini...`);
+            await LoadProfilePictureFromConfig(config.ui.profilePicture, config.configDirectory);
+          } else {
+            console.log(`ℹ️  profilePicture déjà présent dans le local storage, pas de modification`);
+          }
+        }
+        
+        if (config.ui.CustomRingtone && config.configDirectory) {
+          const ringtoneFile = localDB.getItem("RingtoneFile");
+          
+          if (!ringtoneFile || ringtoneFile !== "CustomRingtone") {
+            console.log(`🔄 Chargement de CustomRingtone depuis config.ini...`);
+            await LoadCustomRingtoneFromConfig(config.ui.CustomRingtone, config.configDirectory);
+          } else {
+            console.log(`ℹ️  CustomRingtone déjà présent dans le local storage, pas de modification`);
+          }
+        }
+      })();
     }
 
     // Appliquer les changements à l'UI
@@ -445,6 +521,174 @@ function getDbItem(itemIndex, defaultValue){
     if(localDB.getItem(itemIndex) != null) return localDB.getItem(itemIndex);
     return defaultValue;
 }
+
+// Charger et convertir une image en base64 depuis config.ini
+async function LoadProfilePictureFromConfig(imagePathOrUrl, configDirectory) {
+  try {
+    let imageDataUrl;
+    console.log(`🔍 DEBUG LoadProfilePictureFromConfig - imagePathOrUrl: ${imagePathOrUrl}`);
+    
+    // Si c'est une URL HTTP(S), charger via fetch
+    if (imagePathOrUrl.startsWith('http://') || imagePathOrUrl.startsWith('https://')) {
+      const response = await fetch(imagePathOrUrl);
+      const blob = await response.blob();
+      
+      await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = function() {
+          imageDataUrl = reader.result;
+          resolve();
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } else {
+      // Sinon, lire le fichier local via IPC
+      const imagePath = configDirectory + '/' + imagePathOrUrl;
+      console.log(`📂 Lecture du fichier local: ${imagePath}`);
+      
+      if (window.electron && window.electron.readFileAsBase64) {
+        imageDataUrl = await window.electron.readFileAsBase64(imagePath);
+        console.log(`✅ Fichier chargé via IPC: ${imagePath.substring(imagePath.length - 30)}`);
+      } else {
+        throw new Error('window.electron.readFileAsBase64 non disponible');
+      }
+    }
+    
+    // Convertir en WebP avec Croppie
+    if (imageDataUrl) {
+      console.log(`🎨 Conversion de l'image en WebP via Croppie...`);
+      console.log(`🔍 DEBUG imageDataUrl length: ${imageDataUrl.length}`);
+      console.log(`🔍 DEBUG $ exists: ${typeof $ !== 'undefined'}`);
+      console.log(`🔍 DEBUG Croppie exists: ${typeof $.fn.croppie !== 'undefined'}`);
+      
+      // Créer un élément pour Croppie (doit être visible pour fonctionner)
+      const tempCanvasId = 'temp-profile-picture-canvas-' + Date.now();
+      console.log(`🔍 DEBUG Creating temp canvas with id: ${tempCanvasId}`);
+      
+      const tempCanvas = $('<div id="' + tempCanvasId + '" style="position:absolute;left:-9999px;width:150px;height:150px;"></div>');
+      $('body').append(tempCanvas);
+      console.log(`🔍 DEBUG Temp canvas appended, checking: ${$('#' + tempCanvasId).length}`);
+      
+      try {
+        // Initialiser Croppie
+        console.log(`🔍 DEBUG Initializing Croppie...`);
+        const croppie = $('#' + tempCanvasId).croppie({
+          viewport: { width: 150, height: 150, type: 'circle' }
+        });
+        console.log(`✅ Croppie initialisé`);
+        
+        // Charger l'image
+        console.log(`🔍 DEBUG Binding image to Croppie...`);
+        await new Promise((resolve, reject) => {
+          $('#' + tempCanvasId).croppie('bind', { url: imageDataUrl }).then(function() {
+            console.log(`✅ Image bindée à Croppie`);
+            resolve();
+          }).catch(function(err) {
+            console.error(`❌ Erreur bind Croppie:`, err);
+            reject(err);
+          });
+        });
+        
+        // Convertir en WebP (utiliser le même format que le reste de l'app)
+        console.log(`🔍 DEBUG Converting to WebP...`);
+        await new Promise((resolve, reject) => {
+          const options = { 
+            type: 'base64', 
+            size: 'viewport', 
+            format: 'webp',
+            quality: 0.5, 
+            circle: false 
+          };
+          $('#' + tempCanvasId).croppie('result', options).then(function(webpDataUrl) {
+            console.log(`✅ Conversion WebP réussie, dataUrl length: ${webpDataUrl.length}`);
+            localDB.setItem("profilePicture", webpDataUrl);
+            console.log(`✅ profilePicture converti en WebP et sauvegardé dans localStorage`);
+            resolve();
+          }).catch(function(err) {
+            console.error(`❌ Erreur conversion Croppie:`, err);
+            reject(err);
+          });
+        });
+      } finally {
+        // Nettoyer
+        console.log(`🔍 DEBUG Cleaning up temp canvas...`);
+        $('#' + tempCanvasId).croppie('destroy');
+        $('#' + tempCanvasId).remove();
+        console.log(`✅ Cleanup terminé`);
+      }
+    }
+  } catch (error) {
+    console.error("❌ Erreur lors du chargement de l'image de profil depuis config.ini:", error.message);
+    console.error("❌ Stack:", error.stack);
+  }
+}
+
+// Charger et convertir une sonnerie en base64 depuis config.ini
+async function LoadCustomRingtoneFromConfig(audioPathOrUrl, configDirectory) {
+  try {
+    let audioDataUrl;
+    
+    // Si c'est une URL HTTP(S), charger via fetch
+    if (audioPathOrUrl.startsWith('http://') || audioPathOrUrl.startsWith('https://')) {
+      const response = await fetch(audioPathOrUrl);
+      const blob = await response.blob();
+      
+      await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = function() {
+          audioDataUrl = reader.result;
+          resolve();
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } else {
+      // Sinon, lire le fichier local via IPC
+      const audioPath = configDirectory + '/' + audioPathOrUrl;
+      console.log(`📂 Lecture du fichier audio: ${audioPath}`);
+      
+      if (window.electron && window.electron.readFileAsBase64) {
+        audioDataUrl = await window.electron.readFileAsBase64(audioPath);
+        console.log(`✅ Fichier audio chargé via IPC: ${audioPath.substring(audioPath.length - 30)}`);
+      } else {
+        throw new Error('window.electron.readFileAsBase64 non disponible');
+      }
+    }
+    
+    // Sauvegarder dans localStorage
+    if (audioDataUrl) {
+      const fileName = audioPathOrUrl.split('/').pop();
+      localDB.setItem("CustomRingtone", audioDataUrl);
+      localDB.setItem("CustomRingtoneName", fileName);
+      localDB.setItem("RingtoneFile", "CustomRingtone");
+      console.log(`✅ CustomRingtone sauvegardé dans le local storage (${fileName})`);
+      
+      // Créer un blob et ajouter à audioBlobs (pour que le dropdown le trouve)
+      try {
+        const base64String = audioDataUrl.split(',')[1];
+        const binaryString = atob(base64String);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: 'audio/mpeg' });
+        
+        audioBlobs.CustomRingtone = {
+          file: fileName,
+          url: URL.createObjectURL(blob),
+          blob: audioDataUrl
+        };
+        console.log(`✅ CustomRingtone ajouté à audioBlobs`);
+      } catch (e) {
+        console.error(`❌ Erreur lors de la création du blob audioBlobs:`, e);
+      }
+    }
+  } catch (error) {
+    console.error("❌ Erreur lors du chargement de la sonnerie depuis config.ini:", error.message);
+  }
+}
+
 function getAudioSrcID(){
     var id = localDB.getItem("AudioSrcId");
     return (id != null)? id : "default";
@@ -14989,7 +15233,7 @@ function ShowMyProfile(){
         var selectRingtoneSound = $("#ringtoneSound");
         
         // Populate ringtone sound options
-        var ringtoneSoundList = ["Ringtone", "Alert", "Tone_Busy_UK", "Tone_Busy_US", "Tone_CallWaiting", "Tone_Congestion_UK", "Tone_Congestion_US", 
+        var ringtoneSoundList = ["Ringtone", "Alert", "CustomRingtone", "Tone_Busy_UK", "Tone_Busy_US", "Tone_CallWaiting", "Tone_Congestion_UK", "Tone_Congestion_US", 
                                  "Tone_EarlyMedia_European", "Tone_EarlyMedia_UK", "Tone_EarlyMedia_US", "Tone_EarlyMedia_Australia", "Tone_EarlyMedia_Japan"];
         
         $.each(ringtoneSoundList, function(i, soundName) {
